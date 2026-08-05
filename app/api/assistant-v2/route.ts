@@ -79,34 +79,31 @@ export async function POST(request: Request) {
     }
 
     const client = new OpenAI({ apiKey });
-    const response = await client.responses.create({
+    const completion = await client.chat.completions.create({
       model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-      max_output_tokens: 1200,
-      instructions: [
-        "Eres el cerebro de Samy OS y respondes en español.",
-        "Convierte la orden en exactamente una acción estructurada.",
-        "Acciones permitidas: create_task, create_event, create_client, query o none.",
-        "Resuelve hoy, mañana, días de la semana y horas usando la fecha y zona horaria suministradas.",
-        "No inventes datos ausentes.",
-        "Para una tarea usa title, area, priority y due_date.",
-        "Para un evento usa title, starts_at y location.",
-        "Para un cliente usa client_name, contact y service.",
-        "response debe confirmar brevemente lo entendido o pedir el dato indispensable que falte.",
-      ].join(" "),
-      input: [
+      messages: [
+        {
+          role: "system",
+          content: [
+            "Eres el cerebro de Samy OS y respondes en español.",
+            "Convierte la orden en exactamente una acción estructurada.",
+            "Acciones permitidas: create_task, create_event, create_client, query o none.",
+            "Resuelve hoy, mañana, días de la semana y horas usando la fecha y zona horaria suministradas.",
+            "No inventes datos ausentes.",
+            "Para una tarea usa title, area, priority y due_date.",
+            "Para un evento usa title, starts_at y location.",
+            "Para un cliente usa client_name, contact y service.",
+            "response debe confirmar brevemente lo entendido o pedir el dato indispensable que falte.",
+          ].join(" "),
+        },
         {
           role: "user",
-          content: [
-            {
-              type: "input_text",
-              text: `Fecha y hora actual: ${body.now || new Date().toISOString()}\nZona horaria: ${body.timezone || "America/Toronto"}\nOrden: ${transcript}`,
-            },
-          ],
+          content: `Fecha y hora actual: ${body.now || new Date().toISOString()}\nZona horaria: ${body.timezone || "America/Toronto"}\nOrden: ${transcript}`,
         },
       ],
-      text: {
-        format: {
-          type: "json_schema",
+      response_format: {
+        type: "json_schema",
+        json_schema: {
           name: "samy_os_action",
           strict: true,
           schema,
@@ -114,23 +111,26 @@ export async function POST(request: Request) {
       },
     });
 
-    const outputText = response.output_text?.trim();
-
-    if (!outputText) {
-      console.error("OpenAI returned no output text", {
-        status: response.status,
-        incompleteDetails: response.incomplete_details,
-        error: response.error,
-        output: response.output,
-      });
-
-      const reason = response.incomplete_details?.reason;
+    const message = completion.choices[0]?.message;
+    if (!message) {
       return NextResponse.json(
-        {
-          error: reason
-            ? `OpenAI dejó la respuesta incompleta: ${reason}.`
-            : "OpenAI no devolvió una acción utilizable.",
-        },
+        { error: "OpenAI no devolvió ningún mensaje." },
+        { status: 502 },
+      );
+    }
+
+    if (message.refusal) {
+      return NextResponse.json(
+        { error: `OpenAI rechazó la instrucción: ${message.refusal}` },
+        { status: 502 },
+      );
+    }
+
+    const outputText = message.content?.trim();
+    if (!outputText) {
+      console.error("OpenAI returned an empty message", completion);
+      return NextResponse.json(
+        { error: "OpenAI devolvió un mensaje vacío." },
         { status: 502 },
       );
     }
@@ -141,7 +141,7 @@ export async function POST(request: Request) {
     } catch {
       console.error("Invalid OpenAI JSON:", outputText);
       return NextResponse.json(
-        { error: "OpenAI devolvió una acción con formato inválido." },
+        { error: "OpenAI devolvió JSON inválido." },
         { status: 502 },
       );
     }
