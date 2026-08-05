@@ -9,12 +9,43 @@ export default function LoginPage() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
+  async function confirmLocalUser() {
+    const response = await fetch("/api/auth/dev-confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+
+    const result = (await response.json()) as { error?: string };
+
+    if (!response.ok) {
+      throw new Error(result.error || "No se pudo confirmar el usuario localmente.");
+    }
+  }
+
   async function signIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     setMessage("");
 
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    let { error } = await supabase.auth.signInWithPassword({ email, password });
+
+    if (error?.message.toLowerCase().includes("email not confirmed")) {
+      try {
+        await confirmLocalUser();
+        const retry = await supabase.auth.signInWithPassword({ email, password });
+        error = retry.error;
+      } catch (confirmationError) {
+        setLoading(false);
+        setMessage(
+          confirmationError instanceof Error
+            ? confirmationError.message
+            : "No se pudo confirmar el usuario localmente.",
+        );
+        return;
+      }
+    }
+
     setLoading(false);
 
     if (error) {
@@ -37,14 +68,35 @@ export default function LoginPage() {
       },
     });
 
-    setLoading(false);
-
     if (error) {
+      setLoading(false);
       setMessage(error.message);
       return;
     }
 
-    setMessage("Cuenta creada. Revisa tu correo para confirmar el acceso.");
+    try {
+      await confirmLocalUser();
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      setLoading(false);
+
+      if (signInError) {
+        setMessage(signInError.message);
+        return;
+      }
+
+      window.location.assign("/");
+    } catch (confirmationError) {
+      setLoading(false);
+      setMessage(
+        confirmationError instanceof Error
+          ? confirmationError.message
+          : "Cuenta creada, pero no se pudo confirmar automáticamente.",
+      );
+    }
   }
 
   return (
