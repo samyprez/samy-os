@@ -6,39 +6,267 @@ import { supabase } from "@/lib/supabase";
 
 type SpeechRecognitionEventLike = { results: ArrayLike<{ 0: { transcript: string } }> };
 type SpeechRecognitionErrorLike = { error: string };
-type SpeechRecognitionLike = { lang:string; interimResults:boolean; continuous:boolean; start:()=>void; stop:()=>void; onresult:((event:SpeechRecognitionEventLike)=>void)|null; onerror:((event:SpeechRecognitionErrorLike)=>void)|null; onend:(()=>void)|null };
+type SpeechRecognitionLike = {
+  lang: string;
+  interimResults: boolean;
+  continuous: boolean;
+  start: () => void;
+  stop: () => void;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorLike) => void) | null;
+  onend: (() => void) | null;
+};
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 
-declare global { interface Window { SpeechRecognition?:SpeechRecognitionConstructor; webkitSpeechRecognition?:SpeechRecognitionConstructor } }
+type AssistantAction = {
+  action: "create_task" | "create_event" | "create_client" | "query" | "none";
+  title: string | null;
+  area: string | null;
+  priority: "Alta" | "Media" | "Baja" | null;
+  due_date: string | null;
+  starts_at: string | null;
+  location: string | null;
+  client_name: string | null;
+  contact: string | null;
+  service: string | null;
+  response: string;
+};
 
-function normalize(text:string){ return text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[.,!?]/g," ").replace(/\s+/g," ").trim(); }
-function hasWakePhrase(text:string){ return /^(?:oye\s+)?(?:samy\s*os|samy|asistente\s+virtual|asistente)\b/i.test(text.trim()); }
-function stripWakePhrase(text:string){ return text.replace(/^\s*(?:oye\s+)?(?:samy\s*os|samy|asistente\s+virtual|asistente)[,:\s-]*/i,"").trim(); }
-function parseHour(text:string){
-  const words:Record<string,number>={una:1,dos:2,tres:3,cuatro:4,cinco:5,seis:6,siete:7,ocho:8,nueve:9,diez:10,once:11,doce:12};
-  const numeric=text.match(/(?:a las|a la)\s+(\d{1,2})(?::(\d{2}))?/); let hour=numeric?Number(numeric[1]):null; const minute=numeric?.[2]?Number(numeric[2]):0;
-  if(hour===null){const spoken=text.match(/(?:a las|a la)\s+(una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)/);hour=spoken?words[spoken[1]]:null;}
-  if(hour===null)hour=9; if((text.includes("de la tarde")||text.includes("pm")||text.includes("de la noche"))&&hour<12)hour+=12; if(text.includes("de la manana")&&hour===12)hour=0; return {hour,minute};
-}
-function parseDate(text:string){ const result=new Date(); result.setSeconds(0,0); if(text.includes("pasado manana"))result.setDate(result.getDate()+2); else if(text.includes("manana"))result.setDate(result.getDate()+1); else {const days=["domingo","lunes","martes","miercoles","jueves","viernes","sabado"];const requested=days.findIndex(day=>text.includes(day));if(requested>=0)result.setDate(result.getDate()+((requested-result.getDay()+7)%7||7));} const {hour,minute}=parseHour(text);result.setHours(hour,minute,0,0);return result; }
-function cleanEventTitle(raw:string){ return raw.replace(/^(crea|crear|agrega|agregar|programa|programar|pon)\s+(una?\s+)?(reunion|evento|cita)\s+(con\s+)?/i,"").replace(/\s+(hoy|mañana|manana|pasado mañana|pasado manana|el lunes|el martes|el miércoles|el miercoles|el jueves|el viernes|el sábado|el sabado|el domingo).*$/i,"").trim(); }
-function cleanTaskTitle(raw:string){ return raw.replace(/^(crea|crear|agrega|agregar|anade|añade|pon|recuerdame)\s+(una?\s+)?(tarea\s+)?(para\s+)?/i,"").replace(/\s+(hoy|mañana|manana|pasado mañana|pasado manana|el lunes|el martes|el miércoles|el miercoles|el jueves|el viernes|el sábado|el sabado|el domingo).*$/i,"").trim(); }
-
-export default function VoiceCommand(){
-  const [open,setOpen]=useState(false); const [assistantMode,setAssistantMode]=useState(false); const [listening,setListening]=useState(false); const [transcript,setTranscript]=useState(""); const [message,setMessage]=useState("Activa el asistente y llámame diciendo “Samy OS”.");
-  const recognitionRef=useRef<SpeechRecognitionLike|null>(null); const assistantModeRef=useRef(false);
-  function speak(text:string){ if(!("speechSynthesis" in window))return; window.speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance(text);u.lang="es-ES";u.rate=1;window.speechSynthesis.speak(u); }
-  async function executeCommand(spokenText:string){
-    const rawCommand=stripWakePhrase(spokenText); const command=normalize(rawCommand);
-    if(!command){setMessage("Sí, Samy. ¿Qué necesitas?");speak("Sí, Samy. ¿Qué necesitas?");return;}
-    const {data}=await supabase.auth.getUser(); const user=data.user; if(!user){setMessage("Tu sesión expiró. Vuelve a iniciar sesión.");speak("Tu sesión expiró.");return;}
-    const isEvent=/(reunion|evento|cita|calendario|programa)/.test(command); const isTask=/(tarea|pendiente|recordar|recuerdame|llamar|seguimiento)/.test(command);
-    if(isEvent){const title=cleanEventTitle(rawCommand)||"Nuevo evento";const locationMatch=rawCommand.match(/\s+en\s+(.+?)(?:\s+(?:hoy|mañana|manana|el lunes|el martes|el miércoles|el miercoles|el jueves|el viernes|el sábado|el sabado|el domingo|a las|a la)|$)/i);const startsAt=parseDate(command);const {error}=await supabase.from("events").insert({user_id:user.id,title,starts_at:startsAt.toISOString(),location:locationMatch?.[1]?.trim()||null,status:"Programado"});const response=error?`No pude crear el evento. ${error.message}`:`Listo. Creé el evento ${title} para ${startsAt.toLocaleString()}.`;setMessage(response);speak(response);if(!error)window.setTimeout(()=>window.location.reload(),1800);return;}
-    if(isTask){const title=cleanTaskTitle(rawCommand)||rawCommand;const dueDate=parseDate(command).toISOString().slice(0,10);const areaMatch=rawCommand.match(/(?:para|de|con)\s+([A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ.-]*(?:\s+[A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ.-]*)*)/);const {error}=await supabase.from("tasks").insert({user_id:user.id,title,area:areaMatch?.[1]?.trim()||"General",status:"Pendiente",priority:command.includes("urgente")||command.includes("prioridad alta")?"Alta":"Media",due_date:dueDate});const response=error?`No pude crear la tarea. ${error.message}`:`Listo. Agregué la tarea ${title} en Samy OS.`;setMessage(response);speak(response);if(!error)window.setTimeout(()=>window.location.reload(),1800);return;}
-    const response="Escuché la llamada, pero todavía no entendí la acción. Puedes pedirme crear una tarea o un evento.";setMessage(response);speak(response);
+declare global {
+  interface Window {
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
   }
-  function createRecognition(){const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;if(!Recognition)return null;const recognition=new Recognition();recognition.lang="es-ES";recognition.interimResults=false;recognition.continuous=true;recognition.onresult=(event)=>{const spoken=event.results[event.results.length-1]?.[0]?.transcript??"";setTranscript(spoken);if(!hasWakePhrase(spoken)){setMessage("Asistente activo. Esperando “Samy OS”…");return;}setMessage("Procesando instrucción…");void executeCommand(spoken);};recognition.onerror=(event)=>{if(event.error!=="no-speech")setMessage(`Problema con el micrófono: ${event.error}.`);};recognition.onend=()=>{setListening(false);if(assistantModeRef.current){window.setTimeout(()=>{try{recognition.start();setListening(true);}catch{}},350);}};return recognition;}
-  function enableAssistant(){let recognition=recognitionRef.current;if(!recognition)recognition=createRecognition();if(!recognition){setMessage("Usa Google Chrome o Microsoft Edge para activar el asistente por voz.");return;}recognitionRef.current=recognition;assistantModeRef.current=true;setAssistantMode(true);setListening(true);setMessage("Asistente activo. Llámame diciendo “Samy OS”…");speak("Asistente virtual activado.");try{recognition.start();}catch{}}
-  function disableAssistant(){assistantModeRef.current=false;setAssistantMode(false);setListening(false);recognitionRef.current?.stop();setMessage("Asistente pausado.");speak("Asistente pausado.");}
-  return <><button type="button" onClick={()=>setOpen(true)} className={`fixed bottom-5 right-5 z-50 grid h-14 w-14 place-items-center rounded-full text-white shadow-2xl transition hover:scale-105 ${assistantMode?"bg-emerald-500 shadow-emerald-500/30":"bg-violet-500 shadow-violet-500/30"}`} aria-label="Abrir asistente virtual">{assistantMode?<Sparkles size={23}/>:<Mic size={23}/>}</button>{open&&<div className="fixed inset-0 z-[60] grid place-items-end bg-black/70 p-4 sm:place-items-center"><section className="w-full max-w-lg rounded-3xl border border-white/10 bg-[#11141c] p-6 text-white shadow-2xl"><div className="flex items-center justify-between"><div><p className="text-xs font-semibold uppercase tracking-[.2em] text-violet-400">Asistente virtual</p><h2 className="mt-2 text-2xl font-semibold">Habla con Samy OS</h2></div><button onClick={()=>setOpen(false)} className="rounded-xl p-2 text-zinc-400 hover:bg-white/5"><X size={20}/></button></div><div className="mt-6 rounded-2xl border border-white/10 bg-black/25 p-4"><p className="text-sm leading-6 text-zinc-300">{message}</p>{transcript&&<p className="mt-3 text-sm font-medium text-violet-300">“{transcript}”</p>}</div><button type="button" onClick={assistantMode?disableAssistant:enableAssistant} className={`mt-5 flex w-full items-center justify-center gap-3 rounded-2xl px-5 py-4 font-semibold transition ${assistantMode?"bg-red-500 hover:bg-red-400":"bg-violet-500 hover:bg-violet-400"}`}>{assistantMode?<MicOff size={21}/>:<Mic size={21}/>} {assistantMode?"Pausar asistente":"Activar asistente virtual"}</button><div className="mt-4 rounded-xl bg-violet-500/10 p-3 text-xs leading-5 text-violet-200">Di: “Samy OS, crea una reunión con Salami mañana a las tres” o “Asistente virtual, agrega una tarea para llamar a MiKiosko”.</div></section></div>}</>;
+}
+
+function hasWakePhrase(text: string) {
+  return /^(?:oye\s+)?(?:samy\s*os|samy|asistente\s+virtual|asistente)\b/i.test(text.trim());
+}
+
+function stripWakePhrase(text: string) {
+  return text
+    .replace(/^\s*(?:oye\s+)?(?:samy\s*os|samy|asistente\s+virtual|asistente)[,:\s-]*/i, "")
+    .trim();
+}
+
+export default function VoiceCommand() {
+  const [open, setOpen] = useState(false);
+  const [assistantMode, setAssistantMode] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [transcript, setTranscript] = useState("");
+  const [message, setMessage] = useState("Activa el asistente y llámame diciendo “Samy OS”.");
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const assistantModeRef = useRef(false);
+  const processingRef = useRef(false);
+
+  function speak(text: string) {
+    if (!("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "es-ES";
+    utterance.rate = 1;
+    window.speechSynthesis.speak(utterance);
+  }
+
+  async function interpret(command: string) {
+    const response = await fetch("/api/assistant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        transcript: command,
+        now: new Date().toISOString(),
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      }),
+    });
+
+    const data = (await response.json()) as AssistantAction & { error?: string };
+    if (!response.ok) throw new Error(data.error || "No pude interpretar la instrucción.");
+    return data;
+  }
+
+  async function executeCommand(spokenText: string) {
+    if (processingRef.current) return;
+    processingRef.current = true;
+
+    try {
+      const command = stripWakePhrase(spokenText);
+      if (!command) {
+        setMessage("Sí, Samy. ¿Qué necesitas?");
+        speak("Sí, Samy. ¿Qué necesitas?");
+        return;
+      }
+
+      const { data } = await supabase.auth.getUser();
+      const user = data.user;
+      if (!user) throw new Error("Tu sesión expiró. Vuelve a iniciar sesión.");
+
+      setMessage("ChatGPT está entendiendo la instrucción…");
+      const action = await interpret(command);
+      let databaseError: { message: string } | null = null;
+
+      if (action.action === "create_task") {
+        if (!action.title) throw new Error(action.response || "Falta el nombre de la tarea.");
+        const result = await supabase.from("tasks").insert({
+          user_id: user.id,
+          title: action.title,
+          area: action.area || "General",
+          status: "Pendiente",
+          priority: action.priority || "Media",
+          due_date: action.due_date,
+        });
+        databaseError = result.error;
+      } else if (action.action === "create_event") {
+        if (!action.title || !action.starts_at) {
+          throw new Error(action.response || "Faltan el título o la fecha del evento.");
+        }
+        const result = await supabase.from("events").insert({
+          user_id: user.id,
+          title: action.title,
+          starts_at: action.starts_at,
+          location: action.location,
+          status: "Programado",
+        });
+        databaseError = result.error;
+      } else if (action.action === "create_client") {
+        if (!action.client_name) throw new Error(action.response || "Falta el nombre del cliente.");
+        const result = await supabase.from("clients").insert({
+          user_id: user.id,
+          name: action.client_name,
+          primary_contact: action.contact,
+          service: action.service,
+          status: "Activo",
+          priority: action.priority || "Media",
+          next_step: "Definir próximo paso",
+        });
+        databaseError = result.error;
+      }
+
+      if (databaseError) throw new Error(databaseError.message);
+
+      setMessage(action.response);
+      speak(action.response);
+      if (["create_task", "create_event", "create_client"].includes(action.action)) {
+        window.setTimeout(() => window.location.reload(), 1800);
+      }
+    } catch (error) {
+      const response = error instanceof Error ? error.message : "No pude completar la acción.";
+      setMessage(response);
+      speak(response);
+    } finally {
+      processingRef.current = false;
+    }
+  }
+
+  function createRecognition() {
+    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Recognition) return null;
+
+    const recognition = new Recognition();
+    recognition.lang = "es-ES";
+    recognition.interimResults = false;
+    recognition.continuous = true;
+
+    recognition.onresult = (event) => {
+      const spoken = event.results[event.results.length - 1]?.[0]?.transcript ?? "";
+      setTranscript(spoken);
+      if (!hasWakePhrase(spoken)) {
+        setMessage("Asistente activo. Esperando “Samy OS”…");
+        return;
+      }
+      void executeCommand(spoken);
+    };
+
+    recognition.onerror = (event) => {
+      if (event.error !== "no-speech") setMessage(`Problema con el micrófono: ${event.error}.`);
+    };
+
+    recognition.onend = () => {
+      setListening(false);
+      if (assistantModeRef.current) {
+        window.setTimeout(() => {
+          try {
+            recognition.start();
+            setListening(true);
+          } catch {}
+        }, 350);
+      }
+    };
+
+    return recognition;
+  }
+
+  function enableAssistant() {
+    let recognition = recognitionRef.current;
+    if (!recognition) recognition = createRecognition();
+    if (!recognition) {
+      setMessage("Usa Google Chrome o Microsoft Edge para activar el asistente por voz.");
+      return;
+    }
+
+    recognitionRef.current = recognition;
+    assistantModeRef.current = true;
+    setAssistantMode(true);
+    setListening(true);
+    setMessage("Asistente activo. Llámame diciendo “Samy OS”…");
+    speak("Asistente virtual activado.");
+    try {
+      recognition.start();
+    } catch {}
+  }
+
+  function disableAssistant() {
+    assistantModeRef.current = false;
+    setAssistantMode(false);
+    setListening(false);
+    recognitionRef.current?.stop();
+    setMessage("Asistente pausado.");
+    speak("Asistente pausado.");
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className={`fixed bottom-5 right-5 z-50 grid h-14 w-14 place-items-center rounded-full text-white shadow-2xl transition hover:scale-105 ${assistantMode ? "bg-emerald-500 shadow-emerald-500/30" : "bg-violet-500 shadow-violet-500/30"}`}
+        aria-label="Abrir asistente virtual"
+      >
+        {assistantMode ? <Sparkles size={23} /> : <Mic size={23} />}
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-[60] grid place-items-end bg-black/70 p-4 sm:place-items-center">
+          <section className="w-full max-w-lg rounded-3xl border border-white/10 bg-[#11141c] p-6 text-white shadow-2xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[.2em] text-violet-400">OpenAI + Samy OS</p>
+                <h2 className="mt-2 text-2xl font-semibold">Asistente virtual inteligente</h2>
+              </div>
+              <button onClick={() => setOpen(false)} className="rounded-xl p-2 text-zinc-400 hover:bg-white/5">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="mt-6 rounded-2xl border border-white/10 bg-black/25 p-4">
+              <p className="text-sm leading-6 text-zinc-300">{message}</p>
+              {transcript && <p className="mt-3 text-sm font-medium text-violet-300">“{transcript}”</p>}
+            </div>
+
+            <button
+              type="button"
+              onClick={assistantMode ? disableAssistant : enableAssistant}
+              className={`mt-5 flex w-full items-center justify-center gap-3 rounded-2xl px-5 py-4 font-semibold transition ${assistantMode ? "bg-red-500 hover:bg-red-400" : "bg-violet-500 hover:bg-violet-400"}`}
+            >
+              {assistantMode ? <MicOff size={21} /> : <Mic size={21} />}
+              {assistantMode ? "Pausar asistente" : "Activar asistente virtual"}
+            </button>
+
+            <div className="mt-4 rounded-xl bg-violet-500/10 p-3 text-xs leading-5 text-violet-200">
+              Di: “Samy OS, crea un cliente llamado Restaurante El Patio” o “Samy OS, agenda una reunión con Salami mañana a las tres en Toronto”.
+            </div>
+          </section>
+        </div>
+      )}
+    </>
+  );
 }
