@@ -58,18 +58,44 @@ export default function VoiceCommand() {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const assistantModeRef = useRef(false);
   const processingRef = useRef(false);
+  const speakingRef = useRef(false);
+
+  function restartRecognition() {
+    if (!assistantModeRef.current || speakingRef.current) return;
+    window.setTimeout(() => {
+      try {
+        recognitionRef.current?.start();
+        setListening(true);
+      } catch {}
+    }, 350);
+  }
 
   function speak(text: string) {
     if (!("speechSynthesis" in window)) return;
+
+    speakingRef.current = true;
+    try {
+      recognitionRef.current?.stop();
+    } catch {}
+    setListening(false);
+
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "es-ES";
     utterance.rate = 1;
+    utterance.onend = () => {
+      speakingRef.current = false;
+      restartRecognition();
+    };
+    utterance.onerror = () => {
+      speakingRef.current = false;
+      restartRecognition();
+    };
     window.speechSynthesis.speak(utterance);
   }
 
   async function interpret(command: string) {
-    const response = await fetch("/api/assistant", {
+    const response = await fetch("/api/assistant-v2", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -80,12 +106,12 @@ export default function VoiceCommand() {
     });
 
     const data = (await response.json()) as AssistantAction & { error?: string };
-    if (!response.ok) throw new Error(data.error || "No pude interpretar la instrucción.");
+    if (!response.ok) throw new Error(data.error || `No pude interpretar la instrucción (${response.status}).`);
     return data;
   }
 
   async function executeCommand(spokenText: string) {
-    if (processingRef.current) return;
+    if (processingRef.current || speakingRef.current) return;
     processingRef.current = true;
 
     try {
@@ -167,6 +193,7 @@ export default function VoiceCommand() {
     recognition.continuous = true;
 
     recognition.onresult = (event) => {
+      if (speakingRef.current || processingRef.current) return;
       const spoken = event.results[event.results.length - 1]?.[0]?.transcript ?? "";
       setTranscript(spoken);
       if (!hasWakePhrase(spoken)) {
@@ -177,19 +204,14 @@ export default function VoiceCommand() {
     };
 
     recognition.onerror = (event) => {
-      if (event.error !== "no-speech") setMessage(`Problema con el micrófono: ${event.error}.`);
+      if (event.error !== "no-speech" && !speakingRef.current) {
+        setMessage(`Problema con el micrófono: ${event.error}.`);
+      }
     };
 
     recognition.onend = () => {
       setListening(false);
-      if (assistantModeRef.current) {
-        window.setTimeout(() => {
-          try {
-            recognition.start();
-            setListening(true);
-          } catch {}
-        }, 350);
-      }
+      if (!speakingRef.current) restartRecognition();
     };
 
     return recognition;
@@ -208,19 +230,20 @@ export default function VoiceCommand() {
     setAssistantMode(true);
     setListening(true);
     setMessage("Asistente activo. Llámame diciendo “Samy OS”…");
-    speak("Asistente virtual activado.");
     try {
       recognition.start();
     } catch {}
+    speak("Asistente virtual activado.");
   }
 
   function disableAssistant() {
     assistantModeRef.current = false;
+    speakingRef.current = false;
     setAssistantMode(false);
     setListening(false);
     recognitionRef.current?.stop();
+    window.speechSynthesis.cancel();
     setMessage("Asistente pausado.");
-    speak("Asistente pausado.");
   }
 
   return (
