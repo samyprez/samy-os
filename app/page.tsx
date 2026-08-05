@@ -6,16 +6,18 @@ import {
   ClipboardList,
   HeartPulse,
   LayoutDashboard,
+  LogOut,
   Menu,
-  MessageSquareText,
   NotebookPen,
+  Plus,
   Search,
   Sparkles,
   Store,
   Users,
   X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabase";
 
 type Section =
   | "Dashboard"
@@ -26,10 +28,28 @@ type Section =
   | "Notas"
   | "Salud";
 
-const navigation: Array<{
-  name: Section;
-  icon: typeof LayoutDashboard;
-}> = [
+type Client = {
+  id: string;
+  name: string;
+  brand: string | null;
+  primary_contact: string | null;
+  service: string | null;
+  status: string;
+  priority: string;
+  next_step: string | null;
+};
+
+type Task = {
+  id: string;
+  client_id: string | null;
+  area: string | null;
+  title: string;
+  priority: string;
+  status: string;
+  due_date: string | null;
+};
+
+const navigation: Array<{ name: Section; icon: typeof LayoutDashboard }> = [
   { name: "Dashboard", icon: LayoutDashboard },
   { name: "Clientes", icon: Users },
   { name: "Pendientes", icon: ClipboardList },
@@ -39,75 +59,35 @@ const navigation: Array<{
   { name: "Salud", icon: HeartPulse },
 ];
 
-const clients = [
+const starterClients = [
   {
     name: "Salami Sibao",
     brand: "Amazing Solutions",
+    primary_contact: "Orian",
     service: "Website + publicidad mensual",
     status: "Activo",
     priority: "Alta",
-    contact: "Orian, representante Toronto por confirmar",
-    nextStep:
-      "Terminar actualización web y dar seguimiento a la representante de Toronto.",
+    next_step: "Terminar actualización web y dar seguimiento en Toronto.",
   },
   {
     name: "MiKiosko.ca",
     brand: "Amazing Solutions / TorontoDominicano",
+    primary_contact: "Por confirmar",
     service: "Contenido + publicidad mensual",
     status: "Activo",
     priority: "Alta",
-    contact: "Contacto por confirmar",
-    nextStep:
-      "Crear contenido con productos reales y colocar banners en TorontoDominicano.",
+    next_step: "Crear contenido con productos reales y colocar banners.",
   },
 ];
 
-const tasks = [
-  {
-    title: "Terminar actualización web",
-    area: "Salami Sibao",
-    status: "Pendiente",
-    priority: "Alta",
-  },
-  {
-    title: "Dar seguimiento a representante de Toronto",
-    area: "Salami Sibao",
-    status: "Pendiente",
-    priority: "Alta",
-  },
-  {
-    title: "Crear contenido con productos reales",
-    area: "MiKiosko.ca",
-    status: "En progreso",
-    priority: "Alta",
-  },
-  {
-    title: "Colocar banners en TorontoDominicano",
-    area: "MiKiosko.ca",
-    status: "Pendiente",
-    priority: "Media",
-  },
+const starterTasks = [
+  { title: "Terminar actualización web", area: "Salami Sibao", priority: "Alta", status: "Pendiente" },
+  { title: "Dar seguimiento a representante de Toronto", area: "Salami Sibao", priority: "Alta", status: "Pendiente" },
+  { title: "Crear contenido con productos reales", area: "MiKiosko.ca", priority: "Alta", status: "En progreso" },
+  { title: "Colocar banners en TorontoDominicano", area: "MiKiosko.ca", priority: "Media", status: "Pendiente" },
 ];
 
-const brands = [
-  {
-    name: "Amazing Solutions",
-    type: "Negocio principal",
-    objective: "Web, marketing y ventas",
-  },
-  {
-    name: "TorontoDominicano",
-    type: "Medio comunitario",
-    objective: "Eventos y comunidad dominicana",
-  },
-  {
-    name: "Samy Prez",
-    type: "Marca personal",
-    objective: "Contenido personal y liderazgo",
-  },
-];
-
-function Badge({ children }: { children: React.ReactNode }) {
+function Pill({ children }: { children: React.ReactNode }) {
   return (
     <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-2.5 py-1 text-xs font-semibold text-amber-300">
       {children}
@@ -116,172 +96,249 @@ function Badge({ children }: { children: React.ReactNode }) {
 }
 
 export default function Home() {
-  const [activeSection, setActiveSection] =
-    useState<Section>("Dashboard");
+  const [activeSection, setActiveSection] = useState<Section>("Dashboard");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [clients, setClients] = useState<Client[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [notice, setNotice] = useState("");
   const [assistantInput, setAssistantInput] = useState("");
+  const [assistantReply, setAssistantReply] = useState("");
+  const [newClientName, setNewClientName] = useState("");
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [newTaskArea, setNewTaskArea] = useState("");
+
+  useEffect(() => {
+    void initialize();
+  }, []);
+
+  async function initialize() {
+    setLoading(true);
+    const { data: authData } = await supabase.auth.getUser();
+    const user = authData.user;
+
+    if (!user) {
+      window.location.href = "/login";
+      return;
+    }
+
+    const [{ data: existingClients, error: clientsError }, { data: existingTasks, error: tasksError }] =
+      await Promise.all([
+        supabase.from("clients").select("*").order("created_at", { ascending: true }),
+        supabase.from("tasks").select("*").order("created_at", { ascending: true }),
+      ]);
+
+    if (clientsError || tasksError) {
+      setNotice(clientsError?.message || tasksError?.message || "No se pudieron cargar los datos.");
+      setLoading(false);
+      return;
+    }
+
+    let loadedClients = (existingClients ?? []) as Client[];
+    let loadedTasks = (existingTasks ?? []) as Task[];
+
+    if (loadedClients.length === 0) {
+      const { data } = await supabase
+        .from("clients")
+        .insert(starterClients.map((client) => ({ ...client, user_id: user.id })))
+        .select();
+      loadedClients = (data ?? []) as Client[];
+    }
+
+    if (loadedTasks.length === 0) {
+      const { data } = await supabase
+        .from("tasks")
+        .insert(starterTasks.map((task) => ({ ...task, user_id: user.id })))
+        .select();
+      loadedTasks = (data ?? []) as Task[];
+    }
+
+    setClients(loadedClients);
+    setTasks(loadedTasks);
+    setLoading(false);
+  }
+
+  async function signOut() {
+    await supabase.auth.signOut();
+    window.location.href = "/login";
+  }
+
+  async function addClient() {
+    const name = newClientName.trim();
+    if (!name) return;
+    const { data: authData } = await supabase.auth.getUser();
+    if (!authData.user) return;
+
+    const { data, error } = await supabase
+      .from("clients")
+      .insert({
+        user_id: authData.user.id,
+        name,
+        status: "Activo",
+        priority: "Media",
+        next_step: "Definir próximo paso",
+      })
+      .select()
+      .single();
+
+    if (error) return setNotice(error.message);
+    setClients((current) => [...current, data as Client]);
+    setNewClientName("");
+    setNotice("Cliente creado correctamente.");
+  }
+
+  async function addTask() {
+    const title = newTaskTitle.trim();
+    if (!title) return;
+    const { data: authData } = await supabase.auth.getUser();
+    if (!authData.user) return;
+
+    const { data, error } = await supabase
+      .from("tasks")
+      .insert({
+        user_id: authData.user.id,
+        title,
+        area: newTaskArea.trim() || "General",
+        status: "Pendiente",
+        priority: "Media",
+      })
+      .select()
+      .single();
+
+    if (error) return setNotice(error.message);
+    setTasks((current) => [...current, data as Task]);
+    setNewTaskTitle("");
+    setNewTaskArea("");
+    setNotice("Tarea creada correctamente.");
+  }
+
+  async function toggleTask(task: Task) {
+    const nextStatus = task.status === "Completado" ? "Pendiente" : "Completado";
+    const { error } = await supabase.from("tasks").update({ status: nextStatus }).eq("id", task.id);
+    if (error) return setNotice(error.message);
+    setTasks((current) => current.map((item) => (item.id === task.id ? { ...item, status: nextStatus } : item)));
+  }
+
+  function runAssistant() {
+    const command = assistantInput.trim().toLowerCase();
+    if (!command) return;
+
+    if (command.includes("salami")) {
+      const matches = tasks.filter((task) => (task.area ?? "").toLowerCase().includes("salami"));
+      setAssistantReply(
+        matches.length
+          ? `Salami Sibao tiene ${matches.length} tarea(s): ${matches.map((task) => `${task.title} (${task.status})`).join(", ")}.`
+          : "No encontré tareas de Salami Sibao.",
+      );
+    } else if (command.includes("pendiente") || command.includes("tarea")) {
+      const pending = tasks.filter((task) => task.status !== "Completado");
+      setAssistantReply(`Tienes ${pending.length} tarea(s) pendientes.`);
+    } else if (command.includes("cliente")) {
+      setAssistantReply(`Tienes ${clients.length} cliente(s) activos en Samy OS.`);
+    } else if (command.includes("calendario") || command.includes("mañana") || command.includes("hoy")) {
+      setAssistantReply("La conexión con Google Calendar es el próximo módulo. Por ahora no hay eventos sincronizados.");
+    } else {
+      setAssistantReply("Puedo ayudarte con clientes, tareas y Salami Sibao. Prueba: “muéstrame los pendientes de Salami Sibao”.");
+    }
+  }
 
   const filteredClients = useMemo(() => {
     const query = search.trim().toLowerCase();
-
     if (!query) return clients;
+    return clients.filter((client) => `${client.name} ${client.brand ?? ""} ${client.service ?? ""}`.toLowerCase().includes(query));
+  }, [clients, search]);
 
-    return clients.filter((client) =>
-      `${client.name} ${client.brand} ${client.service} ${client.contact}`
-        .toLowerCase()
-        .includes(query),
-    );
-  }, [search]);
+  const filteredTasks = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return tasks;
+    return tasks.filter((task) => `${task.title} ${task.area ?? ""} ${task.status}`.toLowerCase().includes(query));
+  }, [tasks, search]);
 
-  function navigate(section: Section) {
-    setActiveSection(section);
-    setMobileMenuOpen(false);
+  if (loading) {
+    return <main className="grid min-h-screen place-items-center bg-[#090b10] text-zinc-300">Cargando Samy OS…</main>;
   }
 
   return (
     <main className="min-h-screen bg-[#090b10] text-zinc-100">
       <div className="flex min-h-screen">
-        {mobileMenuOpen && (
-          <button
-            aria-label="Cerrar menú"
-            className="fixed inset-0 z-30 bg-black/70 lg:hidden"
-            onClick={() => setMobileMenuOpen(false)}
-          />
-        )}
+        {mobileMenuOpen && <button aria-label="Cerrar menú" className="fixed inset-0 z-30 bg-black/70 lg:hidden" onClick={() => setMobileMenuOpen(false)} />}
 
-        <aside
-          className={`fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r border-white/10 bg-[#0d1017] transition-transform lg:static lg:translate-x-0 ${
-            mobileMenuOpen ? "translate-x-0" : "-translate-x-full"
-          }`}
-        >
+        <aside className={`fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r border-white/10 bg-[#0d1017] transition-transform lg:static lg:translate-x-0 ${mobileMenuOpen ? "translate-x-0" : "-translate-x-full"}`}>
           <div className="flex h-20 items-center justify-between border-b border-white/10 px-6">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-cyan-400 shadow-lg shadow-violet-500/20">
-                <Sparkles size={20} />
-              </div>
-              <div>
-                <p className="font-semibold tracking-tight">Samy OS</p>
-                <p className="text-xs text-zinc-500">
-                  Centro de operaciones
-                </p>
-              </div>
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-cyan-400"><Sparkles size={20} /></div>
+              <div><p className="font-semibold">Samy OS</p><p className="text-xs text-zinc-500">Centro de operaciones</p></div>
             </div>
-
-            <button
-              className="rounded-lg p-2 text-zinc-400 hover:bg-white/5 lg:hidden"
-              onClick={() => setMobileMenuOpen(false)}
-            >
-              <X size={20} />
-            </button>
+            <button className="lg:hidden" onClick={() => setMobileMenuOpen(false)}><X size={20} /></button>
           </div>
 
           <nav className="flex-1 space-y-1 p-4">
-            {navigation.map(({ name, icon: Icon }) => {
-              const active = activeSection === name;
-
-              return (
-                <button
-                  key={name}
-                  onClick={() => navigate(name)}
-                  className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-medium transition ${
-                    active
-                      ? "bg-white/10 text-white"
-                      : "text-zinc-400 hover:bg-white/5 hover:text-white"
-                  }`}
-                >
-                  <Icon size={19} />
-                  {name}
-                </button>
-              );
-            })}
+            {navigation.map(({ name, icon: Icon }) => (
+              <button key={name} onClick={() => { setActiveSection(name); setMobileMenuOpen(false); }} className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium ${activeSection === name ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-white"}`}>
+                <Icon size={19} />{name}
+              </button>
+            ))}
           </nav>
 
-          <div className="m-4 rounded-2xl border border-violet-400/20 bg-violet-500/10 p-4">
-            <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-xl bg-violet-500/20 text-violet-300">
-              <Sparkles size={18} />
-            </div>
-            <p className="text-sm font-semibold">Enfoque de hoy</p>
-            <p className="mt-1 text-xs leading-5 text-zinc-400">
-              Terminar Salami Sibao antes de abrir nuevas tareas.
-            </p>
-          </div>
+          <button onClick={signOut} className="m-4 flex items-center justify-center gap-2 rounded-xl border border-white/10 px-4 py-3 text-sm text-zinc-300 hover:bg-white/5"><LogOut size={17} />Cerrar sesión</button>
         </aside>
 
         <section className="min-w-0 flex-1">
           <header className="sticky top-0 z-20 flex h-20 items-center gap-4 border-b border-white/10 bg-[#090b10]/90 px-4 backdrop-blur-xl sm:px-8">
-            <button
-              aria-label="Abrir menú"
-              className="rounded-xl border border-white/10 p-2.5 text-zinc-300 lg:hidden"
-              onClick={() => setMobileMenuOpen(true)}
-            >
-              <Menu size={20} />
-            </button>
-
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-medium uppercase tracking-[0.2em] text-violet-400">
-                Samy OS v0.1
-              </p>
-              <h1 className="truncate text-xl font-semibold">
-                {activeSection}
-              </h1>
-            </div>
-
-            <label className="hidden w-full max-w-sm items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 sm:flex">
-              <Search size={17} className="text-zinc-500" />
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Buscar clientes o tareas"
-                className="w-full bg-transparent text-sm outline-none placeholder:text-zinc-600"
-              />
-            </label>
-
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-cyan-400 to-violet-500 text-sm font-bold text-white">
-              SP
-            </div>
+            <button className="rounded-xl border border-white/10 p-2.5 lg:hidden" onClick={() => setMobileMenuOpen(true)}><Menu size={20} /></button>
+            <div className="min-w-0 flex-1"><p className="text-xs font-medium uppercase tracking-[0.2em] text-violet-400">Samy OS v0.2</p><h1 className="text-xl font-semibold">{activeSection}</h1></div>
+            <label className="hidden w-full max-w-sm items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 sm:flex"><Search size={17} className="text-zinc-500" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar clientes o tareas" className="w-full bg-transparent text-sm outline-none" /></label>
           </header>
 
-          <div className="mx-auto max-w-7xl p-4 sm:p-8">
+          <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-8">
+            {notice && <div className="rounded-xl border border-violet-400/20 bg-violet-500/10 px-4 py-3 text-sm text-violet-200">{notice}</div>}
+
             {activeSection === "Dashboard" && (
-              <Dashboard
-                assistantInput={assistantInput}
-                setAssistantInput={setAssistantInput}
-                onNavigate={navigate}
-              />
+              <>
+                <section className="rounded-3xl border border-white/10 bg-gradient-to-br from-violet-500/20 via-[#111520] to-cyan-400/10 p-6 sm:p-8">
+                  <p className="text-sm font-semibold text-violet-300">Resumen ejecutivo</p>
+                  <h2 className="mt-3 text-3xl font-semibold">Buenas, Samy. Tu operación ya está conectada.</h2>
+                  <p className="mt-3 text-zinc-400">Tienes {clients.length} clientes y {tasks.filter((task) => task.status !== "Completado").length} tareas abiertas.</p>
+                </section>
+
+                <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                  {[
+                    ["Clientes activos", clients.length, Users],
+                    ["Pendientes", tasks.filter((task) => task.status !== "Completado").length, CheckCircle2],
+                    ["Completadas", tasks.filter((task) => task.status === "Completado").length, ClipboardList],
+                    ["Eventos", 0, CalendarDays],
+                  ].map(([label, value, Icon]) => {
+                    const MetricIcon = Icon as typeof Users;
+                    return <article key={String(label)} className="rounded-2xl border border-white/10 bg-white/[0.035] p-5"><MetricIcon size={20} className="text-violet-300" /><p className="mt-5 text-sm text-zinc-500">{label as string}</p><p className="mt-2 text-3xl font-semibold">{value as number}</p></article>;
+                  })}
+                </section>
+
+                <section className="grid gap-6 xl:grid-cols-[1.25fr_0.75fr]">
+                  <article className="rounded-2xl border border-white/10 bg-white/[0.035] p-5"><h3 className="text-xl font-semibold">Próximas acciones</h3><div className="mt-5 space-y-3">{tasks.slice(0, 5).map((task) => <TaskRow key={task.id} task={task} onToggle={toggleTask} />)}</div></article>
+                  <article className="rounded-2xl border border-violet-400/20 bg-violet-500/10 p-5"><Sparkles className="text-violet-300" /><h3 className="mt-4 text-xl font-semibold">Pregúntale a Samy OS</h3><textarea value={assistantInput} onChange={(event) => setAssistantInput(event.target.value)} placeholder="Muéstrame los pendientes de Salami Sibao" className="mt-4 min-h-28 w-full rounded-xl border border-white/10 bg-black/20 p-4 text-sm outline-none" /><button onClick={runAssistant} className="mt-3 w-full rounded-xl bg-violet-500 px-4 py-3 text-sm font-semibold">Consultar</button>{assistantReply && <p className="mt-4 rounded-xl bg-black/20 p-4 text-sm leading-6 text-zinc-300">{assistantReply}</p>}</article>
+                </section>
+              </>
             )}
 
             {activeSection === "Clientes" && (
-              <Clients clients={filteredClients} />
+              <section className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 sm:p-6">
+                <div className="flex flex-col gap-3 sm:flex-row"><input value={newClientName} onChange={(event) => setNewClientName(event.target.value)} placeholder="Nombre del nuevo cliente" className="flex-1 rounded-xl border border-white/10 bg-black/20 px-4 py-3 outline-none" /><button onClick={addClient} className="inline-flex items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 font-semibold text-zinc-950"><Plus size={18} />Nuevo cliente</button></div>
+                <div className="mt-6 grid gap-4 lg:grid-cols-2">{filteredClients.map((client) => <article key={client.id} className="rounded-2xl border border-white/10 bg-black/20 p-5"><div className="flex justify-between gap-4"><div><h3 className="text-lg font-semibold">{client.name}</h3><p className="mt-1 text-sm text-zinc-500">{client.brand || "Sin marca"}</p></div><Pill>{client.priority}</Pill></div><p className="mt-4 text-sm text-zinc-300">{client.service || "Servicio por definir"}</p><p className="mt-3 text-sm text-zinc-500">Próximo paso: {client.next_step || "Por definir"}</p></article>)}</div>
+              </section>
             )}
 
-            {activeSection === "Pendientes" && <Tasks />}
-
-            {activeSection === "Calendario" && (
-              <EmptyState
-                icon={CalendarDays}
-                title="Calendario"
-                description="Aquí aparecerán tus reuniones, eventos y fechas límite cuando conectemos Google Calendar."
-              />
+            {activeSection === "Pendientes" && (
+              <section className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 sm:p-6">
+                <div className="grid gap-3 md:grid-cols-[1fr_0.6fr_auto]"><input value={newTaskTitle} onChange={(event) => setNewTaskTitle(event.target.value)} placeholder="Nueva tarea" className="rounded-xl border border-white/10 bg-black/20 px-4 py-3 outline-none" /><input value={newTaskArea} onChange={(event) => setNewTaskArea(event.target.value)} placeholder="Cliente o área" className="rounded-xl border border-white/10 bg-black/20 px-4 py-3 outline-none" /><button onClick={addTask} className="inline-flex items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 font-semibold text-zinc-950"><Plus size={18} />Crear tarea</button></div>
+                <div className="mt-6 space-y-3">{filteredTasks.map((task) => <TaskRow key={task.id} task={task} onToggle={toggleTask} />)}</div>
+              </section>
             )}
 
-            {activeSection === "Marcas" && <Brands />}
-
-            {activeSection === "Notas" && (
-              <EmptyState
-                icon={NotebookPen}
-                title="Notas"
-                description="Guarda ideas, decisiones importantes y notas relacionadas con clientes o proyectos."
-              />
-            )}
-
-            {activeSection === "Salud" && (
-              <EmptyState
-                icon={HeartPulse}
-                title="Salud"
-                description="Registra seguimientos, medicamentos, síntomas y notas personales de salud."
-              />
-            )}
+            {activeSection === "Calendario" && <EmptyState icon={CalendarDays} title="Calendario" description="Google Calendar será el próximo conector." />}
+            {activeSection === "Marcas" && <EmptyState icon={Store} title="Marcas" description="Aquí administraremos Amazing Solutions, TorontoDominicano y Samy Prez." />}
+            {activeSection === "Notas" && <EmptyState icon={NotebookPen} title="Notas" description="El módulo de notas persistentes viene en la próxima iteración." />}
+            {activeSection === "Salud" && <EmptyState icon={HeartPulse} title="Salud" description="Este espacio se mantendrá privado y separado de los datos comerciales." />}
           </div>
         </section>
       </div>
@@ -289,316 +346,15 @@ export default function Home() {
   );
 }
 
-function Dashboard({
-  assistantInput,
-  setAssistantInput,
-  onNavigate,
-}: {
-  assistantInput: string;
-  setAssistantInput: (value: string) => void;
-  onNavigate: (section: Section) => void;
-}) {
-  const metrics = [
-    {
-      label: "Clientes activos",
-      value: "2",
-      note: "Ambos con prioridad alta",
-      icon: Users,
-    },
-    {
-      label: "Pendientes",
-      value: "4",
-      note: "3 requieren seguimiento",
-      icon: CheckCircle2,
-    },
-    {
-      label: "Eventos próximos",
-      value: "0",
-      note: "Calendario por conectar",
-      icon: CalendarDays,
-    },
-    {
-      label: "Marcas",
-      value: "3",
-      note: "Ecosistema activo",
-      icon: Store,
-    },
-  ];
-
+function TaskRow({ task, onToggle }: { task: Task; onToggle: (task: Task) => void }) {
   return (
-    <div className="space-y-6">
-      <section className="overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-violet-500/20 via-[#111520] to-cyan-400/10 p-6 sm:p-8">
-        <div className="grid gap-8 lg:grid-cols-[1fr_auto] lg:items-center">
-          <div>
-            <p className="mb-3 text-sm font-semibold text-violet-300">
-              Resumen ejecutivo
-            </p>
-            <h2 className="max-w-3xl text-3xl font-semibold tracking-tight sm:text-4xl">
-              Buenas, Samy. Esto es lo más importante ahora.
-            </h2>
-            <p className="mt-4 max-w-2xl text-sm leading-6 text-zinc-400 sm:text-base">
-              Tienes dos clientes activos, cuatro acciones abiertas y dos
-              seguimientos comerciales de alta prioridad.
-            </p>
-          </div>
-
-          <button className="inline-flex items-center justify-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-200">
-            <Sparkles size={18} />
-            Pregúntale a Samy OS
-          </button>
-        </div>
-      </section>
-
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {metrics.map(({ label, value, note, icon: Icon }) => (
-          <article
-            key={label}
-            className="rounded-2xl border border-white/10 bg-white/[0.035] p-5"
-          >
-            <div className="mb-5 flex items-center justify-between">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/5 text-zinc-300">
-                <Icon size={19} />
-              </div>
-              <span className="text-xs text-emerald-400">Activo</span>
-            </div>
-            <p className="text-sm text-zinc-500">{label}</p>
-            <p className="mt-2 text-3xl font-semibold">{value}</p>
-            <p className="mt-2 text-xs text-zinc-500">{note}</p>
-          </article>
-        ))}
-      </section>
-
-      <section className="grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
-        <article className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 sm:p-6">
-          <div className="mb-5 flex items-center justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-violet-400">
-                Prioridades
-              </p>
-              <h3 className="mt-2 text-xl font-semibold">
-                Próximas acciones
-              </h3>
-            </div>
-            <button
-              onClick={() => onNavigate("Pendientes")}
-              className="text-sm text-zinc-400 transition hover:text-white"
-            >
-              Ver todas
-            </button>
-          </div>
-
-          <div className="space-y-3">
-            {tasks.map((task) => (
-              <div
-                key={task.title}
-                className="flex items-center gap-4 rounded-xl border border-white/5 bg-black/20 p-4"
-              >
-                <button
-                  aria-label={`Completar ${task.title}`}
-                  className="h-5 w-5 shrink-0 rounded-full border border-zinc-600 transition hover:border-emerald-400"
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">
-                    {task.title}
-                  </p>
-                  <p className="mt-1 text-xs text-zinc-500">
-                    {task.area} · {task.status}
-                  </p>
-                </div>
-                <Badge>{task.priority}</Badge>
-              </div>
-            ))}
-          </div>
-        </article>
-
-        <article className="rounded-2xl border border-violet-400/20 bg-gradient-to-b from-violet-500/10 to-white/[0.03] p-5 sm:p-6">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-500/20 text-violet-300">
-            <MessageSquareText size={21} />
-          </div>
-
-          <p className="mt-5 text-xs font-semibold uppercase tracking-[0.18em] text-violet-400">
-            Asistente ejecutivo
-          </p>
-          <h3 className="mt-2 text-xl font-semibold">
-            ¿Qué necesitas resolver?
-          </h3>
-          <p className="mt-3 text-sm leading-6 text-zinc-400">
-            Escríbeme una instrucción. En la próxima fase conectaremos esta
-            caja con acciones reales.
-          </p>
-
-          <textarea
-            value={assistantInput}
-            onChange={(event) => setAssistantInput(event.target.value)}
-            placeholder="Ejemplo: ¿Qué clientes necesitan seguimiento?"
-            className="mt-5 min-h-28 w-full resize-none rounded-xl border border-white/10 bg-black/20 p-4 text-sm outline-none transition placeholder:text-zinc-600 focus:border-violet-400/50"
-          />
-
-          <button className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-violet-500 px-4 py-3 text-sm font-semibold transition hover:bg-violet-400">
-            <Sparkles size={17} />
-            Consultar
-          </button>
-        </article>
-      </section>
-    </div>
+    <article className="flex items-center gap-4 rounded-xl border border-white/10 bg-black/20 p-4">
+      <button aria-label={`Cambiar estado de ${task.title}`} onClick={() => onToggle(task)} className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${task.status === "Completado" ? "border-emerald-400 bg-emerald-400 text-black" : "border-zinc-600"}`}>{task.status === "Completado" && <CheckCircle2 size={15} />}</button>
+      <div className="min-w-0 flex-1"><p className={task.status === "Completado" ? "text-zinc-500 line-through" : "font-medium"}>{task.title}</p><p className="mt-1 text-sm text-zinc-500">{task.area || "General"} · {task.status}</p></div><Pill>{task.priority}</Pill>
+    </article>
   );
 }
 
-function Clients({
-  clients: visibleClients,
-}: {
-  clients: typeof clients;
-}) {
-  return (
-    <section className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 sm:p-6">
-      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-violet-400">
-            CRM
-          </p>
-          <h2 className="mt-2 text-2xl font-semibold">Clientes activos</h2>
-          <p className="mt-2 text-sm text-zinc-500">
-            Seguimiento comercial y próximos pasos.
-          </p>
-        </div>
-
-        <button className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-zinc-950">
-          Nuevo cliente
-        </button>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        {visibleClients.map((client) => (
-          <article
-            key={client.name}
-            className="rounded-2xl border border-white/10 bg-black/20 p-5"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h3 className="text-lg font-semibold">{client.name}</h3>
-                <p className="mt-1 text-sm text-zinc-500">
-                  {client.brand}
-                </p>
-              </div>
-              <Badge>{client.priority}</Badge>
-            </div>
-
-            <div className="mt-5 space-y-4 text-sm">
-              <div>
-                <p className="text-xs uppercase tracking-wider text-zinc-600">
-                  Servicio
-                </p>
-                <p className="mt-1 text-zinc-300">{client.service}</p>
-              </div>
-
-              <div>
-                <p className="text-xs uppercase tracking-wider text-zinc-600">
-                  Contacto
-                </p>
-                <p className="mt-1 text-zinc-300">{client.contact}</p>
-              </div>
-
-              <div>
-                <p className="text-xs uppercase tracking-wider text-zinc-600">
-                  Próximo paso
-                </p>
-                <p className="mt-1 leading-6 text-zinc-300">
-                  {client.nextStep}
-                </p>
-              </div>
-            </div>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function Tasks() {
-  return (
-    <section className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 sm:p-6">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-violet-400">
-            Operaciones
-          </p>
-          <h2 className="mt-2 text-2xl font-semibold">
-            Pendientes activos
-          </h2>
-        </div>
-        <button className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-zinc-950">
-          Nueva tarea
-        </button>
-      </div>
-
-      <div className="space-y-3">
-        {tasks.map((task) => (
-          <article
-            key={task.title}
-            className="flex flex-col gap-4 rounded-xl border border-white/10 bg-black/20 p-4 sm:flex-row sm:items-center"
-          >
-            <button className="h-5 w-5 shrink-0 rounded-full border border-zinc-600" />
-
-            <div className="min-w-0 flex-1">
-              <p className="font-medium">{task.title}</p>
-              <p className="mt-1 text-sm text-zinc-500">
-                {task.area} · {task.status}
-              </p>
-            </div>
-
-            <Badge>{task.priority}</Badge>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function Brands() {
-  return (
-    <section className="grid gap-4 md:grid-cols-3">
-      {brands.map((brand) => (
-        <article
-          key={brand.name}
-          className="rounded-2xl border border-white/10 bg-white/[0.035] p-5"
-        >
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-300">
-            <Store size={20} />
-          </div>
-          <h2 className="mt-5 text-lg font-semibold">{brand.name}</h2>
-          <p className="mt-1 text-sm text-zinc-500">{brand.type}</p>
-          <p className="mt-4 text-sm leading-6 text-zinc-300">
-            {brand.objective}
-          </p>
-        </article>
-      ))}
-    </section>
-  );
-}
-
-function EmptyState({
-  icon: Icon,
-  title,
-  description,
-}: {
-  icon: typeof CalendarDays;
-  title: string;
-  description: string;
-}) {
-  return (
-    <section className="flex min-h-[500px] items-center justify-center rounded-3xl border border-dashed border-white/10 bg-white/[0.02] p-8 text-center">
-      <div className="max-w-md">
-        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white/5 text-zinc-300">
-          <Icon size={25} />
-        </div>
-        <h2 className="mt-5 text-2xl font-semibold">{title}</h2>
-        <p className="mt-3 text-sm leading-6 text-zinc-500">
-          {description}
-        </p>
-        <button className="mt-6 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium transition hover:bg-white/10">
-          Crear primer registro
-        </button>
-      </div>
-    </section>
-  );
+function EmptyState({ icon: Icon, title, description }: { icon: typeof CalendarDays; title: string; description: string }) {
+  return <section className="flex min-h-[430px] items-center justify-center rounded-3xl border border-dashed border-white/10 bg-white/[0.02] p-8 text-center"><div><div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white/5"><Icon size={25} /></div><h2 className="mt-5 text-2xl font-semibold">{title}</h2><p className="mt-3 text-sm text-zinc-500">{description}</p></div></section>;
 }
