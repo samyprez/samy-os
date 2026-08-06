@@ -1,6 +1,7 @@
 "use client";
 
 import { Mic, MicOff, Sparkles, X } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
@@ -55,6 +56,7 @@ function normalizeCommand(text: string) {
 }
 
 export default function VoiceCommand() {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [assistantMode, setAssistantMode] = useState(false);
   const [listening, setListening] = useState(false);
@@ -195,52 +197,105 @@ export default function VoiceCommand() {
       setMessage("ChatGPT está entendiendo la instrucción…");
       const action = await interpret(command);
       let databaseError: { message: string } | null = null;
+      let recordCreated = false;
+      let duplicateFound = false;
 
       if (action.action === "create_task") {
         if (!action.title) throw new Error(action.response || "Falta el nombre de la tarea.");
-        const result = await supabase.from("tasks").insert({
-          user_id: user.id,
-          title: action.title,
-          area: action.area || "General",
-          status: "Pendiente",
-          priority: action.priority || "Media",
-          due_date: action.due_date,
-        });
-        databaseError = result.error;
+
+        let duplicateQuery = supabase
+          .from("tasks")
+          .select("id")
+          .eq("user_id", user.id)
+          .eq("title", action.title)
+          .eq("status", "Pendiente");
+
+        duplicateQuery = action.due_date
+          ? duplicateQuery.eq("due_date", action.due_date)
+          : duplicateQuery.is("due_date", null);
+
+        const duplicate = await duplicateQuery.limit(1);
+        if (duplicate.error) throw new Error(duplicate.error.message);
+        duplicateFound = Boolean(duplicate.data?.length);
+
+        if (!duplicateFound) {
+          const result = await supabase.from("tasks").insert({
+            user_id: user.id,
+            title: action.title,
+            area: action.area || "General",
+            status: "Pendiente",
+            priority: action.priority || "Media",
+            due_date: action.due_date,
+          });
+          databaseError = result.error;
+          recordCreated = !result.error;
+        }
       } else if (action.action === "create_event") {
         if (!action.title || !action.starts_at) {
           throw new Error(action.response || "Faltan el título o la fecha del evento.");
         }
-        const result = await supabase.from("events").insert({
-          user_id: user.id,
-          title: action.title,
-          starts_at: action.starts_at,
-          location: action.location,
-          status: "Programado",
-        });
-        databaseError = result.error;
+
+        const duplicate = await supabase
+          .from("events")
+          .select("id")
+          .eq("user_id", user.id)
+          .eq("title", action.title)
+          .eq("starts_at", action.starts_at)
+          .limit(1);
+
+        if (duplicate.error) throw new Error(duplicate.error.message);
+        duplicateFound = Boolean(duplicate.data?.length);
+
+        if (!duplicateFound) {
+          const result = await supabase.from("events").insert({
+            user_id: user.id,
+            title: action.title,
+            starts_at: action.starts_at,
+            location: action.location,
+            status: "Programado",
+          });
+          databaseError = result.error;
+          recordCreated = !result.error;
+        }
       } else if (action.action === "create_client") {
         if (!action.client_name) throw new Error(action.response || "Falta el nombre del cliente.");
-        const result = await supabase.from("clients").insert({
-          user_id: user.id,
-          name: action.client_name,
-          primary_contact: action.contact,
-          service: action.service,
-          status: "Activo",
-          priority: action.priority || "Media",
-          next_step: "Definir próximo paso",
-        });
-        databaseError = result.error;
+
+        const duplicate = await supabase
+          .from("clients")
+          .select("id")
+          .eq("user_id", user.id)
+          .ilike("name", action.client_name)
+          .limit(1);
+
+        if (duplicate.error) throw new Error(duplicate.error.message);
+        duplicateFound = Boolean(duplicate.data?.length);
+
+        if (!duplicateFound) {
+          const result = await supabase.from("clients").insert({
+            user_id: user.id,
+            name: action.client_name,
+            primary_contact: action.contact,
+            service: action.service,
+            status: "Activo",
+            priority: action.priority || "Media",
+            next_step: "Definir próximo paso",
+          });
+          databaseError = result.error;
+          recordCreated = !result.error;
+        }
       }
 
       if (databaseError) throw new Error(databaseError.message);
 
-      const reply = action.response || "Listo. Completé la acción.";
+      const reply = duplicateFound
+        ? "Esa información ya estaba registrada. No la dupliqué."
+        : action.response || "Listo. Completé la acción.";
+
       setMessage(reply);
       speak(reply);
 
-      if (["create_task", "create_event", "create_client"].includes(action.action)) {
-        window.setTimeout(() => window.location.reload(), 2200);
+      if (recordCreated) {
+        router.refresh();
       }
     } catch (error) {
       const reply = error instanceof Error ? error.message : "No pude completar la acción.";
