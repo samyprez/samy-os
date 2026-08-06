@@ -72,6 +72,17 @@ function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
 }
 
+function cleanNullableString(value: string | null) {
+  if (value === null) return null;
+  const cleaned = value.trim();
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+function isValidDateValue(value: string | null) {
+  if (value === null) return true;
+  return !Number.isNaN(Date.parse(value));
+}
+
 function isAssistantAction(value: unknown): value is AssistantAction {
   if (!value || typeof value !== "object") return false;
 
@@ -91,6 +102,57 @@ function isAssistantAction(value: unknown): value is AssistantAction {
     typeof candidate.response === "string" &&
     candidate.response.trim().length > 0
   );
+}
+
+function normalizeAction(action: AssistantAction): AssistantAction {
+  const normalized: AssistantAction = {
+    ...action,
+    title: cleanNullableString(action.title),
+    area: cleanNullableString(action.area),
+    due_date: cleanNullableString(action.due_date),
+    starts_at: cleanNullableString(action.starts_at),
+    location: cleanNullableString(action.location),
+    client_name: cleanNullableString(action.client_name),
+    contact: cleanNullableString(action.contact),
+    service: cleanNullableString(action.service),
+    response: action.response.trim(),
+  };
+
+  if (!isValidDateValue(normalized.due_date) || !isValidDateValue(normalized.starts_at)) {
+    return {
+      ...normalized,
+      action: "none",
+      due_date: null,
+      starts_at: null,
+      response: "No pude determinar una fecha válida. Dime el día y la hora nuevamente.",
+    };
+  }
+
+  if (normalized.action === "create_task" && !normalized.title) {
+    return {
+      ...normalized,
+      action: "none",
+      response: "Dime el nombre de la tarea que deseas crear.",
+    };
+  }
+
+  if (normalized.action === "create_event" && (!normalized.title || !normalized.starts_at)) {
+    return {
+      ...normalized,
+      action: "none",
+      response: "Dime el nombre, el día y la hora del evento.",
+    };
+  }
+
+  if (normalized.action === "create_client" && !normalized.client_name) {
+    return {
+      ...normalized,
+      action: "none",
+      response: "Dime el nombre del cliente que deseas crear.",
+    };
+  }
+
+  return normalized;
 }
 
 function openAIErrorResponse(error: OpenAI.APIError) {
@@ -172,7 +234,9 @@ export async function POST(request: Request) {
             "Convierte la orden en exactamente una acción estructurada.",
             "Acciones permitidas: create_task, create_event, create_client, query o none.",
             "Resuelve hoy, mañana, días de la semana y horas usando la fecha y zona horaria suministradas.",
+            "Devuelve due_date y starts_at como fechas ISO 8601 completas; conserva la zona horaria indicada.",
             "No inventes datos ausentes.",
+            "Si falta un dato indispensable, usa action none y pide solamente ese dato en response.",
             "Para una tarea usa title, area, priority y due_date.",
             "Para un evento usa title, starts_at y location.",
             "Para un cliente usa client_name, contact y service.",
@@ -237,7 +301,7 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json(parsed);
+    return NextResponse.json(normalizeAction(parsed));
   } catch (error) {
     console.error("Assistant v2 error:", error);
 
