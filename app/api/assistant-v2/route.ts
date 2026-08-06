@@ -180,7 +180,7 @@ function normalizeAction(action: AssistantAction): AssistantAction {
   return normalized;
 }
 
-function openAIErrorResponse(error: OpenAI.APIError) {
+function openAIErrorResponse(error: { status?: number; code?: string | null }) {
   const status = error.status || 502;
 
   if (status === 401) {
