@@ -3,20 +3,42 @@
 import { FormEvent, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
+const isDevelopment = process.env.NODE_ENV !== "production";
+
+function normalizeEmail(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function validateCredentials(email: string, password: string) {
+  if (!email) return "Escribe tu correo electrónico.";
+  if (!/^\S+@\S+\.\S+$/.test(email)) return "Escribe un correo electrónico válido.";
+  if (password.length < 6) return "La contraseña debe tener al menos 6 caracteres.";
+  return null;
+}
+
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function confirmLocalUser() {
+  async function confirmLocalUser(normalizedEmail: string) {
+    if (!isDevelopment) return;
+
     const response = await fetch("/api/auth/dev-confirm", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ email: normalizedEmail }),
     });
 
-    const result = (await response.json()) as { error?: string };
+    const rawBody = await response.text();
+    let result: { error?: string } = {};
+
+    try {
+      result = rawBody ? (JSON.parse(rawBody) as { error?: string }) : {};
+    } catch {
+      throw new Error("El servidor devolvió una respuesta inválida al confirmar la cuenta local.");
+    }
 
     if (!response.ok) {
       throw new Error(result.error || "No se pudo confirmar el usuario localmente.");
@@ -25,63 +47,92 @@ export default function LoginPage() {
 
   async function signIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setLoading(true);
-    setMessage("");
+    if (loading) return;
 
-    let { error } = await supabase.auth.signInWithPassword({ email, password });
-
-    if (error?.message.toLowerCase().includes("email not confirmed")) {
-      try {
-        await confirmLocalUser();
-        const retry = await supabase.auth.signInWithPassword({ email, password });
-        error = retry.error;
-      } catch (confirmationError) {
-        setLoading(false);
-        setMessage(
-          confirmationError instanceof Error
-            ? confirmationError.message
-            : "No se pudo confirmar el usuario localmente.",
-        );
-        return;
-      }
-    }
-
-    setLoading(false);
-
-    if (error) {
-      setMessage(error.message);
+    const normalizedEmail = normalizeEmail(email);
+    const validationError = validateCredentials(normalizedEmail, password);
+    if (validationError) {
+      setMessage(validationError);
       return;
     }
 
-    window.location.assign("/");
-  }
-
-  async function signUp() {
     setLoading(true);
     setMessage("");
-
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: `${window.location.origin}/login`,
-      },
-    });
-
-    if (error) {
-      setLoading(false);
-      setMessage(error.message);
-      return;
-    }
 
     try {
-      await confirmLocalUser();
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email,
+      let { error } = await supabase.auth.signInWithPassword({
+        email: normalizedEmail,
         password,
       });
 
+      if (
+        isDevelopment &&
+        error?.message.toLowerCase().includes("email not confirmed")
+      ) {
+        await confirmLocalUser(normalizedEmail);
+        const retry = await supabase.auth.signInWithPassword({
+          email: normalizedEmail,
+          password,
+        });
+        error = retry.error;
+      }
+
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+
+      window.location.assign("/");
+    } catch (signInError) {
+      setMessage(
+        signInError instanceof Error
+          ? signInError.message
+          : "No se pudo iniciar sesión.",
+      );
+    } finally {
       setLoading(false);
+    }
+  }
+
+  async function signUp() {
+    if (loading) return;
+
+    const normalizedEmail = normalizeEmail(email);
+    const validationError = validateCredentials(normalizedEmail, password);
+    if (validationError) {
+      setMessage(validationError);
+      return;
+    }
+
+    setLoading(true);
+    setMessage("");
+
+    try {
+      const { error } = await supabase.auth.signUp({
+        email: normalizedEmail,
+        password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/login`,
+        },
+      });
+
+      if (error) {
+        setMessage(error.message);
+        return;
+      }
+
+      if (!isDevelopment) {
+        setMessage(
+          "Cuenta creada. Revisa tu correo y confirma la cuenta antes de iniciar sesión.",
+        );
+        return;
+      }
+
+      await confirmLocalUser(normalizedEmail);
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: normalizedEmail,
+        password,
+      });
 
       if (signInError) {
         setMessage(signInError.message);
@@ -89,13 +140,14 @@ export default function LoginPage() {
       }
 
       window.location.assign("/");
-    } catch (confirmationError) {
-      setLoading(false);
+    } catch (signUpError) {
       setMessage(
-        confirmationError instanceof Error
-          ? confirmationError.message
-          : "Cuenta creada, pero no se pudo confirmar automáticamente.",
+        signUpError instanceof Error
+          ? signUpError.message
+          : "No se pudo crear la cuenta.",
       );
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -114,7 +166,8 @@ export default function LoginPage() {
             placeholder="Correo electrónico"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 outline-none transition focus:border-violet-400"
+            disabled={loading}
+            className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 outline-none transition focus:border-violet-400 disabled:opacity-60"
           />
 
           <input
@@ -125,7 +178,8 @@ export default function LoginPage() {
             placeholder="Contraseña"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 outline-none transition focus:border-violet-400"
+            disabled={loading}
+            className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 outline-none transition focus:border-violet-400 disabled:opacity-60"
           />
 
           <button
@@ -147,7 +201,11 @@ export default function LoginPage() {
         </form>
 
         {message && (
-          <p className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-zinc-300">
+          <p
+            role="status"
+            aria-live="polite"
+            className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-zinc-300"
+          >
             {message}
           </p>
         )}
