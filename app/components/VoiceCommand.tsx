@@ -12,6 +12,7 @@ type SpeechRecognitionLike = {
   continuous: boolean;
   start: () => void;
   stop: () => void;
+  abort?: () => void;
   onresult: ((event: SpeechRecognitionEventLike) => void) | null;
   onerror: ((event: SpeechRecognitionErrorLike) => void) | null;
   onend: (() => void) | null;
@@ -55,42 +56,67 @@ export default function VoiceCommand() {
   const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [message, setMessage] = useState("Activa el asistente y llámame diciendo “Samy OS”.");
+
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const assistantModeRef = useRef(false);
   const processingRef = useRef(false);
   const speakingRef = useRef(false);
+  const restartTimerRef = useRef<number | null>(null);
 
-  function restartRecognition() {
-    if (!assistantModeRef.current || speakingRef.current) return;
-    window.setTimeout(() => {
+  function clearRestartTimer() {
+    if (restartTimerRef.current !== null) {
+      window.clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
+  }
+
+  function startRecognition(delay = 650) {
+    clearRestartTimer();
+    if (!assistantModeRef.current || processingRef.current || speakingRef.current) return;
+
+    restartTimerRef.current = window.setTimeout(() => {
+      if (!assistantModeRef.current || processingRef.current || speakingRef.current) return;
       try {
         recognitionRef.current?.start();
         setListening(true);
-      } catch {}
-    }, 350);
+        setMessage("Asistente activo. Esperando “Samy OS”…");
+      } catch {
+        // Chrome throws when recognition is already active. That is harmless.
+      }
+    }, delay);
+  }
+
+  function stopRecognition() {
+    clearRestartTimer();
+    try {
+      recognitionRef.current?.stop();
+    } catch {
+      // Recognition may already be stopped.
+    }
+    setListening(false);
   }
 
   function speak(text: string) {
-    if (!("speechSynthesis" in window)) return;
+    if (!("speechSynthesis" in window)) {
+      startRecognition();
+      return;
+    }
 
     speakingRef.current = true;
-    try {
-      recognitionRef.current?.stop();
-    } catch {}
-    setListening(false);
-
+    stopRecognition();
     window.speechSynthesis.cancel();
+
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "es-ES";
     utterance.rate = 1;
-    utterance.onend = () => {
+
+    const finish = () => {
       speakingRef.current = false;
-      restartRecognition();
+      startRecognition(900);
     };
-    utterance.onerror = () => {
-      speakingRef.current = false;
-      restartRecognition();
-    };
+
+    utterance.onend = finish;
+    utterance.onerror = finish;
     window.speechSynthesis.speak(utterance);
   }
 
@@ -106,19 +132,24 @@ export default function VoiceCommand() {
     });
 
     const data = (await response.json()) as AssistantAction & { error?: string };
-    if (!response.ok) throw new Error(data.error || `No pude interpretar la instrucción (${response.status}).`);
+    if (!response.ok) {
+      throw new Error(data.error || `No pude interpretar la instrucción (${response.status}).`);
+    }
     return data;
   }
 
   async function executeCommand(spokenText: string) {
     if (processingRef.current || speakingRef.current) return;
+
     processingRef.current = true;
+    stopRecognition();
 
     try {
       const command = stripWakePhrase(spokenText);
       if (!command) {
-        setMessage("Sí, Samy. ¿Qué necesitas?");
-        speak("Sí, Samy. ¿Qué necesitas?");
+        const reply = "Sí, Samy. ¿Qué necesitas?";
+        setMessage(reply);
+        speak(reply);
         return;
       }
 
@@ -169,17 +200,20 @@ export default function VoiceCommand() {
 
       if (databaseError) throw new Error(databaseError.message);
 
-      setMessage(action.response);
-      speak(action.response);
+      const reply = action.response || "Listo. Completé la acción.";
+      setMessage(reply);
+      speak(reply);
+
       if (["create_task", "create_event", "create_client"].includes(action.action)) {
-        window.setTimeout(() => window.location.reload(), 1800);
+        window.setTimeout(() => window.location.reload(), 2200);
       }
     } catch (error) {
-      const response = error instanceof Error ? error.message : "No pude completar la acción.";
-      setMessage(response);
-      speak(response);
+      const reply = error instanceof Error ? error.message : "No pude completar la acción.";
+      setMessage(reply);
+      speak(reply);
     } finally {
       processingRef.current = false;
+      if (!speakingRef.current) startRecognition();
     }
   }
 
@@ -194,24 +228,30 @@ export default function VoiceCommand() {
 
     recognition.onresult = (event) => {
       if (speakingRef.current || processingRef.current) return;
-      const spoken = event.results[event.results.length - 1]?.[0]?.transcript ?? "";
+
+      const spoken = event.results[event.results.length - 1]?.[0]?.transcript?.trim() ?? "";
+      if (!spoken) return;
+
       setTranscript(spoken);
       if (!hasWakePhrase(spoken)) {
         setMessage("Asistente activo. Esperando “Samy OS”…");
         return;
       }
+
       void executeCommand(spoken);
     };
 
     recognition.onerror = (event) => {
-      if (event.error !== "no-speech" && !speakingRef.current) {
+      // Chrome emits these during normal stop/restart cycles.
+      if (["aborted", "no-speech"].includes(event.error)) return;
+      if (!speakingRef.current && assistantModeRef.current) {
         setMessage(`Problema con el micrófono: ${event.error}.`);
       }
     };
 
     recognition.onend = () => {
       setListening(false);
-      if (!speakingRef.current) restartRecognition();
+      startRecognition();
     };
 
     return recognition;
@@ -220,6 +260,7 @@ export default function VoiceCommand() {
   function enableAssistant() {
     let recognition = recognitionRef.current;
     if (!recognition) recognition = createRecognition();
+
     if (!recognition) {
       setMessage("Usa Google Chrome o Microsoft Edge para activar el asistente por voz.");
       return;
@@ -227,21 +268,31 @@ export default function VoiceCommand() {
 
     recognitionRef.current = recognition;
     assistantModeRef.current = true;
+    processingRef.current = false;
+    speakingRef.current = false;
     setAssistantMode(true);
-    setListening(true);
     setMessage("Asistente activo. Llámame diciendo “Samy OS”…");
-    try {
-      recognition.start();
-    } catch {}
-    speak("Asistente virtual activado.");
+
+    // Do not speak here: Chrome would abort the microphone immediately after activation.
+    startRecognition(100);
   }
 
   function disableAssistant() {
     assistantModeRef.current = false;
+    processingRef.current = false;
     speakingRef.current = false;
+    clearRestartTimer();
     setAssistantMode(false);
     setListening(false);
-    recognitionRef.current?.stop();
+
+    try {
+      recognitionRef.current?.abort?.();
+    } catch {
+      try {
+        recognitionRef.current?.stop();
+      } catch {}
+    }
+
     window.speechSynthesis.cancel();
     setMessage("Asistente pausado.");
   }
@@ -273,6 +324,9 @@ export default function VoiceCommand() {
             <div className="mt-6 rounded-2xl border border-white/10 bg-black/25 p-4">
               <p className="text-sm leading-6 text-zinc-300">{message}</p>
               {transcript && <p className="mt-3 text-sm font-medium text-violet-300">“{transcript}”</p>}
+              {assistantMode && (
+                <p className="mt-2 text-xs text-zinc-500">{listening ? "Escuchando…" : "Procesando o respondiendo…"}</p>
+              )}
             </div>
 
             <button
@@ -285,7 +339,7 @@ export default function VoiceCommand() {
             </button>
 
             <div className="mt-4 rounded-xl bg-violet-500/10 p-3 text-xs leading-5 text-violet-200">
-              Di: “Samy OS, crea un cliente llamado Restaurante El Patio” o “Samy OS, agenda una reunión con Salami mañana a las tres en Toronto”.
+              Di: “Samy OS, crea una tarea para llamar a Salami mañana a las diez”.
             </div>
           </section>
         </div>
