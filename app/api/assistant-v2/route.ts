@@ -17,6 +17,20 @@ type AssistantAction = {
   response: string;
 };
 
+const allowedActions = new Set<AssistantAction["action"]>([
+  "create_task",
+  "create_event",
+  "create_client",
+  "query",
+  "none",
+]);
+
+const allowedPriorities = new Set<NonNullable<AssistantAction["priority"]>>([
+  "Alta",
+  "Media",
+  "Baja",
+]);
+
 const schema = {
   type: "object",
   additionalProperties: false,
@@ -54,6 +68,59 @@ const schema = {
   ],
 } as const;
 
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function isAssistantAction(value: unknown): value is AssistantAction {
+  if (!value || typeof value !== "object") return false;
+
+  const candidate = value as Record<string, unknown>;
+  return (
+    allowedActions.has(candidate.action as AssistantAction["action"]) &&
+    isNullableString(candidate.title) &&
+    isNullableString(candidate.area) &&
+    (candidate.priority === null ||
+      allowedPriorities.has(candidate.priority as NonNullable<AssistantAction["priority"]>)) &&
+    isNullableString(candidate.due_date) &&
+    isNullableString(candidate.starts_at) &&
+    isNullableString(candidate.location) &&
+    isNullableString(candidate.client_name) &&
+    isNullableString(candidate.contact) &&
+    isNullableString(candidate.service) &&
+    typeof candidate.response === "string" &&
+    candidate.response.trim().length > 0
+  );
+}
+
+function openAIErrorResponse(error: OpenAI.APIError) {
+  const status = error.status || 502;
+
+  if (status === 401) {
+    return NextResponse.json(
+      { error: "La clave de OpenAI no es válida o no pertenece a este proyecto." },
+      { status },
+    );
+  }
+
+  if (status === 429) {
+    return NextResponse.json(
+      {
+        error:
+          error.code === "insufficient_quota"
+            ? "La cuenta de OpenAI API no tiene cuota disponible para este proyecto."
+            : "OpenAI está recibiendo demasiadas solicitudes. Inténtalo nuevamente en unos segundos.",
+      },
+      { status },
+    );
+  }
+
+  return NextResponse.json(
+    { error: `OpenAI no pudo procesar la instrucción (${status}).` },
+    { status: status >= 400 && status < 600 ? status : 502 },
+  );
+}
+
 export async function POST(request: Request) {
   try {
     const apiKey = process.env.OPENAI_API_KEY;
@@ -64,16 +131,32 @@ export async function POST(request: Request) {
       );
     }
 
-    const body = (await request.json()) as {
+    let body: {
       transcript?: string;
       now?: string;
       timezone?: string;
     };
 
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return NextResponse.json(
+        { error: "La solicitud enviada al asistente no contiene JSON válido." },
+        { status: 400 },
+      );
+    }
+
     const transcript = body.transcript?.trim();
     if (!transcript) {
       return NextResponse.json(
         { error: "No se recibió ninguna instrucción." },
+        { status: 400 },
+      );
+    }
+
+    if (transcript.length > 2000) {
+      return NextResponse.json(
+        { error: "La instrucción es demasiado larga. Resume la orden e inténtalo nuevamente." },
         { status: 400 },
       );
     }
@@ -128,16 +211,16 @@ export async function POST(request: Request) {
 
     const outputText = message.content?.trim();
     if (!outputText) {
-      console.error("OpenAI returned an empty message", completion);
+      console.error("OpenAI returned an empty message", completion.id);
       return NextResponse.json(
         { error: "OpenAI devolvió un mensaje vacío." },
         { status: 502 },
       );
     }
 
-    let action: AssistantAction;
+    let parsed: unknown;
     try {
-      action = JSON.parse(outputText) as AssistantAction;
+      parsed = JSON.parse(outputText);
     } catch {
       console.error("Invalid OpenAI JSON:", outputText);
       return NextResponse.json(
@@ -146,9 +229,22 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json(action);
+    if (!isAssistantAction(parsed)) {
+      console.error("Invalid assistant action shape:", parsed);
+      return NextResponse.json(
+        { error: "OpenAI devolvió una acción incompleta o incompatible." },
+        { status: 502 },
+      );
+    }
+
+    return NextResponse.json(parsed);
   } catch (error) {
     console.error("Assistant v2 error:", error);
+
+    if (error instanceof OpenAI.APIError) {
+      return openAIErrorResponse(error);
+    }
+
     return NextResponse.json(
       {
         error:
