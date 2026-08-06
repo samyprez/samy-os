@@ -83,6 +83,31 @@ function isValidDateValue(value: string | null) {
   return !Number.isNaN(Date.parse(value));
 }
 
+function isValidTimeZone(value: string) {
+  if (!value || value.length > 100) return false;
+
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveRequestContext(now: unknown, timezone: unknown) {
+  const safeNow =
+    typeof now === "string" && now.length <= 100 && !Number.isNaN(Date.parse(now))
+      ? new Date(now).toISOString()
+      : new Date().toISOString();
+
+  const safeTimezone =
+    typeof timezone === "string" && isValidTimeZone(timezone)
+      ? timezone
+      : "America/Toronto";
+
+  return { now: safeNow, timezone: safeTimezone };
+}
+
 function isAssistantAction(value: unknown): value is AssistantAction {
   if (!value || typeof value !== "object") return false;
 
@@ -177,6 +202,13 @@ function openAIErrorResponse(error: OpenAI.APIError) {
     );
   }
 
+  if (status === 408 || status === 504) {
+    return NextResponse.json(
+      { error: "OpenAI tardó demasiado en responder. Inténtalo nuevamente." },
+      { status: 504 },
+    );
+  }
+
   return NextResponse.json(
     { error: `OpenAI no pudo procesar la instrucción (${status}).` },
     { status: status >= 400 && status < 600 ? status : 502 },
@@ -223,7 +255,13 @@ export async function POST(request: Request) {
       );
     }
 
-    const client = new OpenAI({ apiKey });
+    const requestContext = resolveRequestContext(body.now, body.timezone);
+    const client = new OpenAI({
+      apiKey,
+      timeout: 20000,
+      maxRetries: 1,
+    });
+
     const completion = await client.chat.completions.create({
       model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
       messages: [
@@ -245,7 +283,7 @@ export async function POST(request: Request) {
         },
         {
           role: "user",
-          content: `Fecha y hora actual: ${body.now || new Date().toISOString()}\nZona horaria: ${body.timezone || "America/Toronto"}\nOrden: ${transcript}`,
+          content: `Fecha y hora actual: ${requestContext.now}\nZona horaria: ${requestContext.timezone}\nOrden: ${transcript}`,
         },
       ],
       response_format: {
@@ -268,7 +306,7 @@ export async function POST(request: Request) {
 
     if (message.refusal) {
       return NextResponse.json(
-        { error: `OpenAI rechazó la instrucción: ${message.refusal}` },
+        { error: "OpenAI rechazó la instrucción." },
         { status: 502 },
       );
     }
@@ -286,7 +324,7 @@ export async function POST(request: Request) {
     try {
       parsed = JSON.parse(outputText);
     } catch {
-      console.error("Invalid OpenAI JSON:", outputText);
+      console.error("Invalid OpenAI JSON received", completion.id);
       return NextResponse.json(
         { error: "OpenAI devolvió JSON inválido." },
         { status: 502 },
@@ -294,7 +332,7 @@ export async function POST(request: Request) {
     }
 
     if (!isAssistantAction(parsed)) {
-      console.error("Invalid assistant action shape:", parsed);
+      console.error("Invalid assistant action shape received", completion.id);
       return NextResponse.json(
         { error: "OpenAI devolvió una acción incompleta o incompatible." },
         { status: 502 },
@@ -309,13 +347,15 @@ export async function POST(request: Request) {
       return openAIErrorResponse(error);
     }
 
+    if (error instanceof Error && error.name === "AbortError") {
+      return NextResponse.json(
+        { error: "La solicitud tardó demasiado. Inténtalo nuevamente." },
+        { status: 504 },
+      );
+    }
+
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Error inesperado al interpretar la instrucción.",
-      },
+      { error: "Error inesperado al interpretar la instrucción." },
       { status: 500 },
     );
   }
