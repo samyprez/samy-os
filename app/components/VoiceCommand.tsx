@@ -50,6 +50,10 @@ function stripWakePhrase(text: string) {
     .trim();
 }
 
+function normalizeCommand(text: string) {
+  return text.toLocaleLowerCase("es").replace(/\s+/g, " ").trim();
+}
+
 export default function VoiceCommand() {
   const [open, setOpen] = useState(false);
   const [assistantMode, setAssistantMode] = useState(false);
@@ -62,6 +66,7 @@ export default function VoiceCommand() {
   const processingRef = useRef(false);
   const speakingRef = useRef(false);
   const restartTimerRef = useRef<number | null>(null);
+  const lastCommandRef = useRef<{ command: string; at: number } | null>(null);
 
   function clearRestartTimer() {
     if (restartTimerRef.current !== null) {
@@ -121,31 +126,61 @@ export default function VoiceCommand() {
   }
 
   async function interpret(command: string) {
-    const response = await fetch("/api/assistant-v2", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        transcript: command,
-        now: new Date().toISOString(),
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      }),
-    });
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 20000);
 
-    const data = (await response.json()) as AssistantAction & { error?: string };
-    if (!response.ok) {
-      throw new Error(data.error || `No pude interpretar la instrucción (${response.status}).`);
+    try {
+      const response = await fetch("/api/assistant-v2", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transcript: command,
+          now: new Date().toISOString(),
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        }),
+        signal: controller.signal,
+      });
+
+      const rawBody = await response.text();
+      let data: (AssistantAction & { error?: string }) | null = null;
+
+      try {
+        data = rawBody ? (JSON.parse(rawBody) as AssistantAction & { error?: string }) : null;
+      } catch {
+        throw new Error(`El servidor devolvió una respuesta inválida (${response.status}).`);
+      }
+
+      if (!response.ok) {
+        throw new Error(data?.error || `No pude interpretar la instrucción (${response.status}).`);
+      }
+      if (!data) throw new Error("El servidor no devolvió una respuesta.");
+
+      return data;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        throw new Error("La respuesta tardó demasiado. Inténtalo nuevamente.");
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
     }
-    return data;
   }
 
   async function executeCommand(spokenText: string) {
     if (processingRef.current || speakingRef.current) return;
 
+    const command = stripWakePhrase(spokenText);
+    const normalized = normalizeCommand(command);
+    const now = Date.now();
+    const previous = lastCommandRef.current;
+
+    if (normalized && previous?.command === normalized && now - previous.at < 5000) return;
+    if (normalized) lastCommandRef.current = { command: normalized, at: now };
+
     processingRef.current = true;
     stopRecognition();
 
     try {
-      const command = stripWakePhrase(spokenText);
       if (!command) {
         const reply = "Sí, Samy. ¿Qué necesitas?";
         setMessage(reply);
@@ -270,6 +305,7 @@ export default function VoiceCommand() {
     assistantModeRef.current = true;
     processingRef.current = false;
     speakingRef.current = false;
+    lastCommandRef.current = null;
     setAssistantMode(true);
     setMessage("Asistente activo. Llámame diciendo “Samy OS”…");
 
@@ -281,6 +317,7 @@ export default function VoiceCommand() {
     assistantModeRef.current = false;
     processingRef.current = false;
     speakingRef.current = false;
+    lastCommandRef.current = null;
     clearRestartTimer();
     setAssistantMode(false);
     setListening(false);
