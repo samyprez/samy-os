@@ -42,12 +42,12 @@ declare global {
 }
 
 function hasWakePhrase(text: string) {
-  return /^(?:oye\s+)?(?:samy\s*os|samy|asistente\s+virtual|asistente)\b/i.test(text.trim());
+  return /^(?:oye\s+)?(?:asistente\s+personal|asistente\s+virtual|asistente)\b/i.test(text.trim());
 }
 
 function stripWakePhrase(text: string) {
   return text
-    .replace(/^\s*(?:oye\s+)?(?:samy\s*os|samy|asistente\s+virtual|asistente)[,:\s-]*/i, "")
+    .replace(/^\s*(?:oye\s+)?(?:asistente\s+personal|asistente\s+virtual|asistente)[,:\s-]*/i, "")
     .trim();
 }
 
@@ -61,7 +61,7 @@ export default function VoiceCommand() {
   const [assistantMode, setAssistantMode] = useState(false);
   const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState("");
-  const [message, setMessage] = useState("Activa el asistente y llámame diciendo “Samy OS”.");
+  const [message, setMessage] = useState("Activa el asistente y llámame diciendo “Asistente”.");
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const assistantModeRef = useRef(false);
@@ -86,7 +86,7 @@ export default function VoiceCommand() {
       try {
         recognitionRef.current?.start();
         setListening(true);
-        setMessage("Asistente activo. Esperando “Samy OS”…");
+        setMessage("Asistente activo. Esperando “Asistente”…");
       } catch {
         // Chrome throws when recognition is already active. That is harmless.
       }
@@ -324,7 +324,7 @@ export default function VoiceCommand() {
 
       setTranscript(spoken);
       if (!hasWakePhrase(spoken)) {
-        setMessage("Asistente activo. Esperando “Samy OS”…");
+        setMessage("Asistente activo. Esperando “Asistente”…");
         return;
       }
 
@@ -362,7 +362,7 @@ export default function VoiceCommand() {
     speakingRef.current = false;
     lastCommandRef.current = null;
     setAssistantMode(true);
-    setMessage("Asistente activo. Llámame diciendo “Samy OS”…");
+    setMessage("Asistente activo. Llámame diciendo “Asistente”…");
 
     // Do not speak here: Chrome would abort the microphone immediately after activation.
     startRecognition(100);
@@ -406,7 +406,7 @@ export default function VoiceCommand() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[.2em] text-violet-400">OpenAI + Samy OS</p>
-                <h2 className="mt-2 text-2xl font-semibold">Asistente virtual inteligente</h2>
+                <h2 className="mt-2 text-2xl font-semibold">Asistente personal inteligente</h2>
               </div>
               <button onClick={() => setOpen(false)} className="rounded-xl p-2 text-zinc-400 hover:bg-white/5">
                 <X size={20} />
@@ -431,7 +431,7 @@ export default function VoiceCommand() {
             </button>
 
             <div className="mt-4 rounded-xl bg-violet-500/10 p-3 text-xs leading-5 text-violet-200">
-              Di: “Samy OS, crea una tarea para llamar a Salami mañana a las diez”.
+              Di: “Asistente, crea una tarea para llamar a Salami mañana a las diez”. También puedes decir “Asistente virtual” o “Asistente personal”.
             </div>
           </section>
         </div>
