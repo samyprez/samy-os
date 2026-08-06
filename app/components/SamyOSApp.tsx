@@ -1,22 +1,6 @@
 "use client";
 
-import {
-  CalendarDays,
-  CheckCircle2,
-  ClipboardList,
-  HeartPulse,
-  LayoutDashboard,
-  LogOut,
-  Menu,
-  NotebookPen,
-  Plus,
-  Search,
-  Sparkles,
-  Store,
-  Trash2,
-  Users,
-  X,
-} from "lucide-react";
+import { CalendarDays, CheckCircle2, ClipboardList, HeartPulse, LayoutDashboard, LogOut, Menu, NotebookPen, Plus, Search, Sparkles, Store, Trash2, Users, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
@@ -28,11 +12,7 @@ type Note = { id:string; category:string|null; body:string; related_to:string|nu
 type EventItem = { id:string; title:string; description:string|null; starts_at:string; location:string|null; status:string };
 type Health = { id:string; entry_date:string; sleep_hours:number|null; energy_level:number|null; water_glasses:number|null; movement_minutes:number|null; mood:string|null; notes:string|null };
 
-const nav = [
-  ["Dashboard", LayoutDashboard], ["Clientes", Users], ["Pendientes", ClipboardList],
-  ["Calendario", CalendarDays], ["Marcas", Store], ["Notas", NotebookPen], ["Salud", HeartPulse],
-] as const;
-
+const nav = [["Dashboard",LayoutDashboard],["Clientes",Users],["Pendientes",ClipboardList],["Calendario",CalendarDays],["Marcas",Store],["Notas",NotebookPen],["Salud",HeartPulse]] as const;
 const starterClients = [
   { name:"Salami Sibao", brand:"Amazing Solutions", primary_contact:"Orian", service:"Website + publicidad mensual", status:"Activo", priority:"Alta", next_step:"Terminar actualización web y seguimiento en Toronto." },
   { name:"MiKiosko.ca", brand:"Amazing Solutions / TorontoDominicano", primary_contact:"Por confirmar", service:"Contenido + publicidad mensual", status:"Activo", priority:"Alta", next_step:"Crear contenido con productos reales y colocar banners." },
@@ -49,7 +29,7 @@ const starterBrands = [
   { name:"Samy Prez", type:"Marca personal", objective:"Contenido y liderazgo" },
 ];
 
-export default function SamyOSApp() {
+export default function SamyOSApp(){
   const [section,setSection]=useState<Section>("Dashboard");
   const [menu,setMenu]=useState(false); const [loading,setLoading]=useState(true);
   const [notice,setNotice]=useState(""); const [search,setSearch]=useState("");
@@ -60,42 +40,77 @@ export default function SamyOSApp() {
 
   useEffect(()=>{ void loadAll(); },[]);
 
-  async function userId(){ const {data}=await supabase.auth.getUser(); return data.user?.id ?? null; }
+  async function userId(){
+    const {data,error}=await supabase.auth.getUser();
+    if(error){ setNotice("No pude verificar tu sesión. Vuelve a iniciar sesión."); return null; }
+    return data.user?.id ?? null;
+  }
+
   async function loadAll(){
     setLoading(true); setNotice("");
-    const uid=await userId(); if(!uid){ window.location.href="/login"; return; }
+    const uid=await userId();
+    if(!uid){ window.location.href="/login"; return; }
     const [c,t,b,n,e,h]=await Promise.all([
-      supabase.from("clients").select("*").order("created_at"),
-      supabase.from("tasks").select("*").order("created_at"),
-      supabase.from("brands").select("*").order("created_at"),
-      supabase.from("notes").select("*").order("created_at",{ascending:false}),
-      supabase.from("events").select("*").order("starts_at"),
-      supabase.from("health_entries").select("*").order("entry_date",{ascending:false}),
+      supabase.from("clients").select("*").eq("user_id",uid).order("created_at"),
+      supabase.from("tasks").select("*").eq("user_id",uid).order("created_at"),
+      supabase.from("brands").select("*").eq("user_id",uid).order("created_at"),
+      supabase.from("notes").select("*").eq("user_id",uid).order("created_at",{ascending:false}),
+      supabase.from("events").select("*").eq("user_id",uid).order("starts_at"),
+      supabase.from("health_entries").select("*").eq("user_id",uid).order("entry_date",{ascending:false}),
     ]);
-    const firstError=[c,t,b,n,e,h].find(r=>r.error)?.error;
-    if(firstError){ setNotice(firstError.message); setLoading(false); return; }
+    const firstError=[c,t,b,n,e,h].find(result=>result.error)?.error;
+    if(firstError){ setNotice("No pude cargar tus datos. Intenta recargar la página."); setLoading(false); return; }
+
     let cc=(c.data??[]) as Client[]; let tt=(t.data??[]) as Task[]; let bb=(b.data??[]) as Brand[];
-    if(!cc.length){ const r=await supabase.from("clients").insert(starterClients.map(x=>({...x,user_id:uid}))).select(); cc=(r.data??[]) as Client[]; }
-    if(!tt.length){ const r=await supabase.from("tasks").insert(starterTasks.map(x=>({...x,user_id:uid}))).select(); tt=(r.data??[]) as Task[]; }
-    if(!bb.length){ const r=await supabase.from("brands").insert(starterBrands.map(x=>({...x,user_id:uid}))).select(); bb=(r.data??[]) as Brand[]; }
+    if(!cc.length){
+      const result=await supabase.from("clients").insert(starterClients.map(item=>({...item,user_id:uid}))).select();
+      if(result.error){ setNotice("No pude crear los clientes iniciales."); setLoading(false); return; }
+      cc=(result.data??[]) as Client[];
+    }
+    if(!tt.length){
+      const result=await supabase.from("tasks").insert(starterTasks.map(item=>({...item,user_id:uid}))).select();
+      if(result.error){ setNotice("No pude crear las tareas iniciales."); setLoading(false); return; }
+      tt=(result.data??[]) as Task[];
+    }
+    if(!bb.length){
+      const result=await supabase.from("brands").insert(starterBrands.map(item=>({...item,user_id:uid}))).select();
+      if(result.error){ setNotice("No pude crear las marcas iniciales."); setLoading(false); return; }
+      bb=(result.data??[]) as Brand[];
+    }
     setClients(cc); setTasks(tt); setBrands(bb); setNotes((n.data??[]) as Note[]); setEvents((e.data??[]) as EventItem[]); setHealth((h.data??[]) as Health[]); setLoading(false);
   }
+
   async function insert(table:string,payload:Record<string,unknown>,done:(row:any)=>void){
-    const uid=await userId(); if(!uid)return; const {data,error}=await supabase.from(table).insert({...payload,user_id:uid}).select().single();
-    if(error){setNotice(error.message);return;} done(data); setNotice("Guardado correctamente.");
+    const uid=await userId(); if(!uid)return;
+    const {data,error}=await supabase.from(table).insert({...payload,user_id:uid}).select().single();
+    if(error||!data){ setNotice("No pude guardar el registro."); return; }
+    done(data); setNotice("Guardado correctamente.");
   }
-  async function remove(table:string,id:string,done:()=>void){ if(!confirm("¿Eliminar este registro?"))return; const {error}=await supabase.from(table).delete().eq("id",id); if(error)setNotice(error.message); else {done();setNotice("Registro eliminado.");} }
-  async function toggleTask(task:Task){ const status=task.status==="Completado"?"Pendiente":"Completado"; const {error}=await supabase.from("tasks").update({status}).eq("id",task.id); if(error)setNotice(error.message); else setTasks(x=>x.map(t=>t.id===task.id?{...t,status}:t)); }
+
+  async function remove(table:string,id:string,done:()=>void){
+    if(!confirm("¿Eliminar este registro?"))return;
+    const uid=await userId(); if(!uid)return;
+    const {error}=await supabase.from(table).delete().eq("id",id).eq("user_id",uid);
+    if(error)setNotice("No pude eliminar el registro."); else {done();setNotice("Registro eliminado.");}
+  }
+
+  async function toggleTask(task:Task){
+    const uid=await userId(); if(!uid)return;
+    const status=task.status==="Completado"?"Pendiente":"Completado";
+    const {error}=await supabase.from("tasks").update({status}).eq("id",task.id).eq("user_id",uid);
+    if(error)setNotice("No pude actualizar la tarea."); else setTasks(items=>items.map(item=>item.id===task.id?{...item,status}:item));
+  }
+
   async function logout(){ await supabase.auth.signOut(); window.location.href="/login"; }
 
   function runAssistant(){
     const q=assistant.toLowerCase().trim(); if(!q)return;
     const salami=tasks.filter(t=>(t.area??"").toLowerCase().includes("salami")&&t.status!=="Completado");
-    if(q.includes("salami")) setReply(salami.length?`Pendientes de Salami Sibao: ${salami.map(t=>t.title).join("; ")}.`:"Salami Sibao no tiene pendientes abiertos.");
-    else if(q.includes("calendario")||q.includes("evento")||q.includes("hoy")){ const upcoming=events.filter(e=>new Date(e.starts_at)>=new Date()).slice(0,5); setReply(upcoming.length?`Próximos eventos: ${upcoming.map(e=>`${e.title} (${new Date(e.starts_at).toLocaleString()})`).join("; ")}.`:"No hay eventos próximos registrados."); }
-    else if(q.includes("tarea")||q.includes("pendiente")){ const p=tasks.filter(t=>t.status!=="Completado"); setReply(`Tienes ${p.length} pendientes: ${p.slice(0,6).map(t=>t.title).join("; ")}.`); }
-    else if(q.includes("cliente")) setReply(`Tienes ${clients.length} clientes: ${clients.map(c=>c.name).join(", ")}.`);
-    else if(q.includes("nota")) setReply(`Tienes ${notes.length} notas guardadas.`);
+    if(q.includes("salami"))setReply(salami.length?`Pendientes de Salami Sibao: ${salami.map(t=>t.title).join("; ")}.`:"Salami Sibao no tiene pendientes abiertos.");
+    else if(q.includes("calendario")||q.includes("evento")||q.includes("hoy")){const upcoming=events.filter(e=>new Date(e.starts_at)>=new Date()).slice(0,5);setReply(upcoming.length?`Próximos eventos: ${upcoming.map(e=>`${e.title} (${new Date(e.starts_at).toLocaleString()})`).join("; ")}.`:"No hay eventos próximos registrados.");}
+    else if(q.includes("tarea")||q.includes("pendiente")){const p=tasks.filter(t=>t.status!=="Completado");setReply(`Tienes ${p.length} pendientes: ${p.slice(0,6).map(t=>t.title).join("; ")}.`);}
+    else if(q.includes("cliente"))setReply(`Tienes ${clients.length} clientes: ${clients.map(c=>c.name).join(", ")}.`);
+    else if(q.includes("nota"))setReply(`Tienes ${notes.length} notas guardadas.`);
     else setReply("Puedo consultar clientes, pendientes, calendario, notas y Salami Sibao.");
   }
 
@@ -115,12 +130,12 @@ export default function SamyOSApp() {
     <section className="min-w-0 flex-1"><header className="sticky top-0 z-20 flex h-20 items-center gap-4 border-b border-white/10 bg-[#090b10]/90 px-4 backdrop-blur sm:px-8"><button className="lg:hidden" onClick={()=>setMenu(true)}><Menu/></button><div className="flex-1"><p className="text-xs uppercase tracking-[.2em] text-violet-400">Samy OS v1.0</p><h1 className="text-xl font-semibold">{section}</h1></div><label className="hidden max-w-sm flex-1 items-center gap-2 rounded-xl border border-white/10 bg-white/[.04] px-4 py-2 sm:flex"><Search size={17}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar" className="w-full bg-transparent outline-none"/></label></header>
       <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-8">{notice&&<div className="rounded-xl border border-violet-400/20 bg-violet-500/10 p-3 text-sm">{notice}</div>}
         {section==="Dashboard"&&<Dashboard clients={clients.length} pending={pending.length} completed={tasks.length-pending.length} events={events.length} tasks={tasks} assistant={assistant} setAssistant={setAssistant} reply={reply} run={runAssistant} toggle={toggleTask}/>} 
-        {section==="Clientes"&&<Clients items={visibleClients} add={(p)=>insert("clients",p,r=>setClients(x=>[...x,r]))} remove={(id)=>remove("clients",id,()=>setClients(x=>x.filter(i=>i.id!==id)))}/>} 
-        {section==="Pendientes"&&<Tasks items={visibleTasks} add={(p)=>insert("tasks",p,r=>setTasks(x=>[...x,r]))} remove={(id)=>remove("tasks",id,()=>setTasks(x=>x.filter(i=>i.id!==id)))} toggle={toggleTask}/>} 
-        {section==="Calendario"&&<Events items={events} add={(p)=>insert("events",p,r=>setEvents(x=>[...x,r].sort((a,b)=>a.starts_at.localeCompare(b.starts_at))))} remove={(id)=>remove("events",id,()=>setEvents(x=>x.filter(i=>i.id!==id)))}/>} 
-        {section==="Marcas"&&<Brands items={brands} add={(p)=>insert("brands",p,r=>setBrands(x=>[...x,r]))} remove={(id)=>remove("brands",id,()=>setBrands(x=>x.filter(i=>i.id!==id)))}/>} 
-        {section==="Notas"&&<Notes items={notes} add={(p)=>insert("notes",p,r=>setNotes(x=>[r,...x]))} remove={(id)=>remove("notes",id,()=>setNotes(x=>x.filter(i=>i.id!==id)))}/>} 
-        {section==="Salud"&&<HealthView items={health} add={(p)=>insert("health_entries",p,r=>setHealth(x=>[r,...x]))} remove={(id)=>remove("health_entries",id,()=>setHealth(x=>x.filter(i=>i.id!==id)))}/>} 
+        {section==="Clientes"&&<Clients items={visibleClients} add={(p:any)=>insert("clients",p,r=>setClients(x=>[...x,r]))} remove={(id:string)=>remove("clients",id,()=>setClients(x=>x.filter(i=>i.id!==id)))}/>} 
+        {section==="Pendientes"&&<Tasks items={visibleTasks} add={(p:any)=>insert("tasks",p,r=>setTasks(x=>[...x,r]))} remove={(id:string)=>remove("tasks",id,()=>setTasks(x=>x.filter(i=>i.id!==id)))} toggle={toggleTask}/>} 
+        {section==="Calendario"&&<Events items={events} add={(p:any)=>insert("events",p,r=>setEvents(x=>[...x,r].sort((a,b)=>a.starts_at.localeCompare(b.starts_at))))} remove={(id:string)=>remove("events",id,()=>setEvents(x=>x.filter(i=>i.id!==id)))}/>} 
+        {section==="Marcas"&&<Brands items={brands} add={(p:any)=>insert("brands",p,r=>setBrands(x=>[...x,r]))} remove={(id:string)=>remove("brands",id,()=>setBrands(x=>x.filter(i=>i.id!==id)))}/>} 
+        {section==="Notas"&&<Notes items={notes} add={(p:any)=>insert("notes",p,r=>setNotes(x=>[r,...x]))} remove={(id:string)=>remove("notes",id,()=>setNotes(x=>x.filter(i=>i.id!==id)))}/>} 
+        {section==="Salud"&&<HealthView items={health} add={(p:any)=>insert("health_entries",p,r=>setHealth(x=>[r,...x]))} remove={(id:string)=>remove("health_entries",id,()=>setHealth(x=>x.filter(i=>i.id!==id)))}/>} 
       </div></section>
   </div></main>;
 }
