@@ -82,7 +82,7 @@ export default function LoginPage() {
         return;
       }
 
-      window.location.assign("/");
+      window.location.assign("/dashboard");
     } catch (signInError) {
       setMessage(
         signInError instanceof Error
@@ -139,7 +139,7 @@ export default function LoginPage() {
         return;
       }
 
-      window.location.assign("/");
+      window.location.assign("/dashboard");
     } catch (signUpError) {
       setMessage(
         signUpError instanceof Error
