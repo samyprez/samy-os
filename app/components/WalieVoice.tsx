@@ -42,10 +42,13 @@ declare global {
   }
 }
 
-const wakePattern = /^(?:oye\s+)?(?:walie|asistente\s+personal|asistente\s+virtual|asistente)\b/i;
+const wakePattern = /(?:walie|wally|wali|asistente\s+personal|asistente\s+virtual|asistente)\b/i;
+const wakeOnlyPattern = /^\s*(?:oye\s+)?(?:walie|wally|wali|asistente\s+personal|asistente\s+virtual|asistente)[,:\s-]*$/i;
 
 function stripWakePhrase(text: string) {
-  return text.replace(/^\s*(?:oye\s+)?(?:walie|asistente\s+personal|asistente\s+virtual|asistente)[,:\s-]*/i, "").trim();
+  return text
+    .replace(/^\s*(?:oye\s+)?(?:walie|wally|wali|asistente\s+personal|asistente\s+virtual|asistente)[,:\s-]*/i, "")
+    .trim();
 }
 
 export default function WalieVoice() {
@@ -60,6 +63,7 @@ export default function WalieVoice() {
   const processingRef = useRef(false);
   const speakingRef = useRef(false);
   const restartTimerRef = useRef<number | null>(null);
+  const wakeArmedUntilRef = useRef(0);
   const lastCommandRef = useRef<{ text: string; at: number } | null>(null);
 
   function clearTimer() {
@@ -74,7 +78,11 @@ export default function WalieVoice() {
       try {
         recognitionRef.current?.start();
         setListening(true);
-        setMessage("Walie está escuchando. Di “Walie” y tu instrucción.");
+        setMessage(
+          Date.now() < wakeArmedUntilRef.current
+            ? "Sí, Samy. Te escucho…"
+            : "Walie está escuchando. Di “Walie” y tu instrucción.",
+        );
       } catch {}
     }, delay);
   }
@@ -124,10 +132,12 @@ export default function WalieVoice() {
     if (processingRef.current || speakingRef.current) return;
     const command = stripWakePhrase(spoken);
     if (!command) {
-      speak("Sí, Samy. ¿Qué necesitas?");
+      wakeArmedUntilRef.current = Date.now() + 8000;
+      setMessage("Sí, Samy. Te escucho…");
       return;
     }
 
+    wakeArmedUntilRef.current = 0;
     const normalized = command.toLocaleLowerCase("es").replace(/\s+/g, " ").trim();
     const now = Date.now();
     if (lastCommandRef.current?.text === normalized && now - lastCommandRef.current.at < 5000) return;
@@ -205,7 +215,7 @@ export default function WalieVoice() {
       const reply = action.response || "Listo. Lo guardé.";
       setMessage(reply);
       speak(reply);
-      window.setTimeout(() => window.location.reload(), 900);
+      window.setTimeout(() => window.location.reload(), 1200);
     } catch (error) {
       const reply = error instanceof Error ? error.message : "No pude completar la acción.";
       setMessage(reply);
@@ -227,11 +237,27 @@ export default function WalieVoice() {
       if (processingRef.current || speakingRef.current) return;
       const spoken = event.results[event.results.length - 1]?.[0]?.transcript?.trim() || "";
       if (!spoken) return;
+
       setTranscript(spoken);
-      if (!wakePattern.test(spoken)) {
+      const armed = Date.now() < wakeArmedUntilRef.current;
+      const containsWake = wakePattern.test(spoken);
+
+      if (armed && !containsWake) {
+        void execute(spoken);
+        return;
+      }
+
+      if (!containsWake) {
         setMessage("Walie está escuchando. Di “Walie” y tu instrucción.");
         return;
       }
+
+      if (wakeOnlyPattern.test(spoken)) {
+        wakeArmedUntilRef.current = Date.now() + 8000;
+        setMessage("Sí, Samy. Te escucho…");
+        return;
+      }
+
       void execute(spoken);
     };
     recognition.onerror = (event) => {
@@ -255,6 +281,7 @@ export default function WalieVoice() {
     enabledRef.current = true;
     processingRef.current = false;
     speakingRef.current = false;
+    wakeArmedUntilRef.current = 0;
     setEnabled(true);
     setMessage("Walie está activo. Di “Walie” y tu instrucción.");
     startRecognition(100);
@@ -264,6 +291,7 @@ export default function WalieVoice() {
     enabledRef.current = false;
     processingRef.current = false;
     speakingRef.current = false;
+    wakeArmedUntilRef.current = 0;
     clearTimer();
     setEnabled(false);
     setListening(false);
@@ -310,7 +338,7 @@ export default function WalieVoice() {
             </button>
 
             <div className="mt-4 rounded-xl bg-violet-500/10 p-3 text-xs leading-5 text-violet-200">
-              Prueba: “Walie, crea una tarea para llamar a Salami mañana” o “Walie, toma una nota: revisar la propuesta de Google Ads”.
+              Puedes decirlo de una vez: “Walie, crea una tarea para llamar a Salami mañana”. También funciona en dos pasos: “Walie” y luego tu instrucción.
             </div>
           </section>
         </div>
