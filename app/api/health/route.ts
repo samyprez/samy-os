@@ -8,7 +8,7 @@ export async function GET() {
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const openAIConfigured = Boolean(process.env.OPENAI_API_KEY);
   const serviceRoleConfigured = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
-  const gatewayTokenConfigured = Boolean(process.env.SAMY_OS_API_TOKEN);
+  const gatewayTokenConfigured = Boolean(process.env.ASSISTANT_API_KEY || process.env.SAMY_OS_API_TOKEN);
   const ownerConfigured = Boolean(process.env.SAMY_OS_OWNER_USER_ID || process.env.SAMY_OS_OWNER_EMAIL);
   const chatgptGatewayConfigured = serviceRoleConfigured && gatewayTokenConfigured && ownerConfigured;
 
