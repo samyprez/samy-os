@@ -21,8 +21,9 @@ type SpeechRecognitionLike = {
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 
 type AssistantAction = {
-  action: "create_task" | "create_event" | "create_client" | "query" | "none";
+  action: "create_task" | "create_note" | "create_event" | "create_client" | "query" | "none";
   title: string | null;
+  body: string | null;
   area: string | null;
   priority: "Alta" | "Media" | "Baja" | null;
   due_date: string | null;
@@ -31,6 +32,7 @@ type AssistantAction = {
   client_name: string | null;
   contact: string | null;
   service: string | null;
+  related_to: string | null;
   response: string;
 };
 
@@ -136,7 +138,7 @@ export default function VoiceCommand() {
       const accessToken = sessionData.session?.access_token;
       if (!accessToken) throw new Error("Tu sesión expiró. Vuelve a iniciar sesión.");
 
-      const response = await fetch("/api/assistant-v2", {
+      const response = await fetch("/api/walie", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -290,6 +292,18 @@ export default function VoiceCommand() {
           databaseError = result.error;
           recordCreated = !result.error;
         }
+      } else if (action.action === "create_note") {
+        if (!action.body) throw new Error(action.response || "Falta el contenido de la nota.");
+
+        const result = await supabase.from("notes").insert({
+          user_id: user.id,
+          body: action.body,
+          related_to: action.related_to,
+          category: "Assistant",
+          priority: action.priority || "Media",
+        });
+        databaseError = result.error;
+        recordCreated = !result.error;
       }
 
       if (databaseError) throw new Error(databaseError.message);

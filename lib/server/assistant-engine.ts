@@ -195,7 +195,7 @@ if (action.action === "create_client") {
 }
 
 if (action.action === "query") {
-  return { success: false, message: "Las consultas de solo lectura todavía no están conectadas en /api/assistant." };
+  return { success: false, message: "Para consultas de solo lectura usa /api/chatgpt con list_tasks, list_notes u overview." };
 }
 
 return { success: false, message: action.response || "No pude completar la acción." };
