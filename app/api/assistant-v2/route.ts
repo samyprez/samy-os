@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
+import { assertSamyOsCaller } from "@/lib/server/samy-os-admin";
 
 export const runtime = "nodejs";
 
@@ -217,6 +218,15 @@ function openAIErrorResponse(error: { status?: number; code?: string | null }) {
 
 export async function POST(request: Request) {
   try {
+    try {
+      await assertSamyOsCaller(request);
+    } catch (error) {
+      if (error instanceof Error && error.message === "UNAUTHORIZED") {
+        return NextResponse.json({ error: "No autorizado." }, { status: 401 });
+      }
+      throw error;
+    }
+
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
       return NextResponse.json(

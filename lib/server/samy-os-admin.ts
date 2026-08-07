@@ -1,5 +1,6 @@
 import "server-only";
 
+import { timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 
 function required(name: string) {
@@ -8,14 +9,45 @@ function required(name: string) {
   return value;
 }
 
+export function readBearerToken(request: Request) {
+  const header = request.headers.get("authorization") || "";
+  return header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+}
+
+function matchesGatewayToken(received: string) {
+  const expected = (process.env.ASSISTANT_API_KEY || process.env.SAMY_OS_API_TOKEN || "").trim();
+  if (!expected || !received) return false;
+  const a = Buffer.from(received);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
 export function assertSamyOsApiAuth(request: Request) {
   const expected = (process.env.ASSISTANT_API_KEY || process.env.SAMY_OS_API_TOKEN || "").trim();
   if (!expected) throw new Error("Missing ASSISTANT_API_KEY");
-  const header = request.headers.get("authorization") || "";
-  const received = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
-  if (!received || received !== expected) {
+  if (!matchesGatewayToken(readBearerToken(request))) {
     throw new Error("UNAUTHORIZED");
   }
+}
+
+/**
+ * Guard for endpoints the browser calls too. Accepts either the server-to-server
+ * gateway token or a signed-in Samy OS user's Supabase access token, so the voice
+ * UI keeps working without ever shipping the gateway token to the browser.
+ * Returns the resolved user id.
+ */
+export async function assertSamyOsCaller(request: Request): Promise<string> {
+  const token = readBearerToken(request);
+  if (!token) throw new Error("UNAUTHORIZED");
+
+  if (matchesGatewayToken(token)) {
+    return getSamyOsOwnerId();
+  }
+
+  const { data, error } = await getSamyOsAdmin().auth.getUser(token);
+  if (error || !data.user) throw new Error("UNAUTHORIZED");
+  return data.user.id;
 }
 
 export function getSamyOsAdmin() {

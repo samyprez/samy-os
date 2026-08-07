@@ -132,9 +132,16 @@ export default function VoiceCommand() {
     const timeout = window.setTimeout(() => controller.abort(), 20000);
 
     try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) throw new Error("Tu sesión expiró. Vuelve a iniciar sesión.");
+
       const response = await fetch("/api/assistant-v2", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
         body: JSON.stringify({
           transcript: command,
           now: new Date().toISOString(),
