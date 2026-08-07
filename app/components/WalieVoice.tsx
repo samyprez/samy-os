@@ -75,6 +75,7 @@ export default function WalieVoice() {
     clearTimer();
     if (!enabledRef.current || processingRef.current || speakingRef.current) return;
     restartTimerRef.current = window.setTimeout(() => {
+      if (!enabledRef.current || processingRef.current || speakingRef.current) return;
       try {
         recognitionRef.current?.start();
         setListening(true);
@@ -145,13 +146,13 @@ export default function WalieVoice() {
 
     processingRef.current = true;
     stopRecognition();
+    setMessage("Walie está entendiendo la instrucción…");
 
     try {
       const { data, error: authError } = await supabase.auth.getUser();
       if (authError || !data.user) throw new Error("Tu sesión no está activa. Inicia sesión de nuevo.");
       const userId = data.user.id;
 
-      setMessage("Walie está entendiendo la instrucción…");
       const action = await interpret(command);
 
       if (action.action === "create_task") {
@@ -165,7 +166,9 @@ export default function WalieVoice() {
           .limit(1);
         if (duplicate.error) throw new Error(duplicate.error.message);
         if (duplicate.data?.length) {
-          speak("Esa tarea ya estaba registrada. No la dupliqué.");
+          const reply = "Esa tarea ya estaba registrada. No la dupliqué.";
+          setMessage(reply);
+          speak(reply);
           return;
         }
         const result = await supabase.from("tasks").insert({
@@ -214,8 +217,8 @@ export default function WalieVoice() {
 
       const reply = action.response || "Listo. Lo guardé.";
       setMessage(reply);
+      window.dispatchEvent(new Event("samy-os-data-changed"));
       speak(reply);
-      window.setTimeout(() => window.location.reload(), 1200);
     } catch (error) {
       const reply = error instanceof Error ? error.message : "No pude completar la acción.";
       setMessage(reply);
