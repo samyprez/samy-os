@@ -18,6 +18,11 @@ export function buildSamyOsOpenApi(origin: string) {
           summary: "Leer o actualizar Samy OS",
           description:
             "Ejecuta una operación sobre los datos de Samy OS. Antes de crear una tarea con fecha relativa (mañana, el viernes, la semana que viene), convierte la fecha a formato YYYY-MM-DD usando la zona horaria America/Toronto.",
+          // Without this, ChatGPT treats every POST as consequential, prompts on
+          // every single call and never offers "always allow" — which makes
+          // hands-free voice use impossible. This endpoint only writes to Samy's
+          // own tasks and notes and deletes nothing, so the prompt buys little.
+          "x-openai-isConsequential": false,
           security: [{ bearerAuth: [] }],
           requestBody: {
             required: true,
