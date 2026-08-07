@@ -151,6 +151,11 @@ export function buildSamyOsOpenApi(origin: string) {
       },
     },
     components: {
+      // ChatGPT's Action validator rejects the document with "In components
+      // section, schemas subsection is not an object" when components.schemas
+      // is absent. An invalid Action breaks the whole GPT — every message
+      // fails, even ones that never call it. Keep this key even when empty.
+      schemas: {},
       securitySchemes: {
         bearerAuth: {
           type: "http",
