@@ -1,0 +1,71 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Samy OS Assistant",
+    "version": "1.0.0",
+    "description": "Create tasks and notes in Samy OS from natural language, and check system health."
+  },
+  "servers": [
+    { "url": "https://samy-os-seven.vercel.app" }
+  ],
+  "paths": {
+    "/api/assistant": {
+      "post": {
+        "operationId": "samyOsAssistant",
+        "summary": "Send a natural-language instruction to Samy OS",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "user": { "type": "string", "description": "Identifier of the requesting user, e.g. 'samy'." },
+                  "message": { "type": "string", "description": "Natural language instruction, e.g. 'Crea una tarea para llamar a Salami mañana.'" }
+                },
+                "required": ["message"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Instruction processed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "action": { "type": "string" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Invalid request" },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "Server configuration or database error" }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "operationId": "samyOsHealth",
+        "summary": "Check Samy OS system health",
+        "responses": {
+          "200": { "description": "Health status" },
+          "500": { "description": "Health check failed" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer" }
+    }
+  }
+}
