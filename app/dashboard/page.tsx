@@ -1,11 +1,11 @@
 import SamyOSApp from "@/app/components/SamyOSApp";
-import VoiceCommand from "@/app/components/VoiceCommand";
+import WalieVoice from "@/app/components/WalieVoice";
 
 export default function DashboardPage() {
   return (
     <>
       <SamyOSApp />
-      <VoiceCommand />
+      <WalieVoice />
     </>
   );
 }
