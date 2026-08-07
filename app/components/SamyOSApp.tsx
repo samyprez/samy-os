@@ -38,7 +38,12 @@ export default function SamyOSApp(){
   const [events,setEvents]=useState<EventItem[]>([]); const [health,setHealth]=useState<Health[]>([]);
   const [assistant,setAssistant]=useState(""); const [reply,setReply]=useState("");
 
-  useEffect(()=>{ void loadAll(); },[]);
+  useEffect(()=>{
+    void loadAll();
+    const refresh=()=>{ void loadAll(); };
+    window.addEventListener("samy-os-data-changed", refresh);
+    return ()=>window.removeEventListener("samy-os-data-changed", refresh);
+  },[]);
 
   async function userId(){
     const {data,error}=await supabase.auth.getUser();
