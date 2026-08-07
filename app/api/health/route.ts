@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getSamyOsAdmin, getSamyOsOwnerId } from "@/lib/server/samy-os-admin";
 
 export const runtime = "nodejs";
 
@@ -38,16 +39,52 @@ export async function GET() {
     );
 
     const tablesReady = checks.every((item) => item.ok);
+
+    // Presence of a variable proves nothing: a service-role key copied from a
+    // different Supabase project is "configured" and still fails every call.
+    // Exercise it for real so the health check can say which one is wrong.
+    const projectRef = supabaseUrl.replace(/^https?:\/\//, "").split(".")[0];
+    let serviceRoleWorks = false;
+    let serviceRoleError: string | null = null;
+    let ownerResolved = false;
+    let ownerError: string | null = null;
+
+    if (serviceRoleConfigured) {
+      try {
+        const { error } = await getSamyOsAdmin().from("tasks").select("id").limit(1);
+        if (error) serviceRoleError = error.message;
+        else serviceRoleWorks = true;
+      } catch (error) {
+        serviceRoleError = error instanceof Error ? error.message : "service-role check failed";
+      }
+    }
+
+    if (serviceRoleWorks && ownerConfigured) {
+      try {
+        await getSamyOsOwnerId();
+        ownerResolved = true;
+      } catch (error) {
+        ownerError = error instanceof Error ? error.message : "owner lookup failed";
+      }
+    }
+
+    const gatewayReady = chatgptGatewayConfigured && serviceRoleWorks && ownerResolved;
+
     return NextResponse.json({
       ok: tablesReady && openAIConfigured,
       supabase: true,
+      supabaseProject: projectRef,
       tablesReady,
       openai: openAIConfigured,
-      chatgptGateway: chatgptGatewayConfigured,
+      chatgptGateway: gatewayReady,
       gatewayRequirements: {
         serviceRole: serviceRoleConfigured,
+        serviceRoleWorks,
+        serviceRoleError,
         apiToken: gatewayTokenConfigured,
         owner: ownerConfigured,
+        ownerResolved,
+        ownerError,
       },
       tables: checks,
     });
