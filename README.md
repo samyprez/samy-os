@@ -33,11 +33,18 @@ Supported operations:
 - `list_notes`
 - `create_note`
 
-Authentication uses a server-only bearer token (`SAMY_OS_API_TOKEN`). The endpoint performs database operations with the Supabase service-role key and scopes every request to the configured Samy OS owner.
+Authentication uses a server-only bearer token (`ASSISTANT_API_KEY`, or the legacy
+`SAMY_OS_API_TOKEN`). The endpoint performs database operations with the Supabase
+service-role key and scopes every request to the configured Samy OS owner.
 
-The OpenAPI document for a ChatGPT Action is available at:
+The OpenAPI document is generated from a single source
+(`lib/server/openapi-schema.ts`) and served at two equivalent URLs:
 
-`GET /api/chatgpt/openapi`
+- `GET /openapi.json`
+- `GET /api/chatgpt/openapi`
+
+Do not add a static `public/openapi.json` — a file there shadows the route and the
+two copies drift apart, which is what previously pointed ChatGPT at the wrong endpoint.
 
 ### Required production environment variables
 
@@ -46,12 +53,56 @@ NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY
 SUPABASE_SERVICE_ROLE_KEY
 OPENAI_API_KEY
-SAMY_OS_API_TOKEN
+ASSISTANT_API_KEY
 SAMY_OS_OWNER_USER_ID   # preferred
 # or SAMY_OS_OWNER_EMAIL
 ```
 
-Never expose `SUPABASE_SERVICE_ROLE_KEY` or `SAMY_OS_API_TOKEN` in browser code.
+Never expose `SUPABASE_SERVICE_ROLE_KEY` or `ASSISTANT_API_KEY` in browser code.
+
+Confirm they are all live in production with `GET /api/health`; `chatgptGateway`
+must be `true`.
+
+## Connecting Samy OS to ChatGPT (GPT Action)
+
+GPT Actions with an OpenAPI schema remain the official way to connect a private
+REST API to ChatGPT. Steps:
+
+1. In ChatGPT, open the sidebar → **GPTs** → **Create a GPT** → **Configure**.
+2. Name it `Samy OS`.
+3. Paste these instructions:
+
+   ```text
+   Eres Walie, el asistente operativo de Samy. Usas la acción samyOs para
+   guardar y consultar todo en Samy OS.
+
+   Zona horaria: America/Toronto. Convierte siempre "mañana", "el viernes" o
+   "la semana que viene" a una fecha real YYYY-MM-DD antes de llamar la acción.
+
+   - Si Samy pide recordar hacer algo → create_task.
+   - Si Samy quiere guardar información o una idea → create_note.
+   - Si pregunta qué tiene pendiente → list_tasks, o overview para un resumen.
+   - Para completar una tarea, primero list_tasks para obtener el task_id,
+     luego complete_task.
+
+   Confirma cada acción en español, en una sola frase corta. No inventes datos.
+   ```
+
+4. Scroll to **Actions** → **Create new action**.
+5. Click **Import from URL** and paste:
+   `https://samy-os-seven.vercel.app/openapi.json`
+6. Under **Authentication**, choose **API Key**, Auth Type **Bearer**, and paste
+   the value of `ASSISTANT_API_KEY`.
+7. Save. Test with: *"Crea una tarea para llamar a Salami mañana."*
+
+### Testing the gateway directly
+
+```bash
+curl -s -X POST https://samy-os-seven.vercel.app/api/chatgpt \
+  -H "Authorization: Bearer $ASSISTANT_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"operation":"create_task","title":"Llamar a Salami","due_date":"2026-08-08"}'
+```
 
 ## Health check
 
