@@ -26,12 +26,28 @@ Production exposes a secure server endpoint at:
 
 Supported operations:
 
-- `overview`
-- `list_tasks`
-- `create_task`
-- `complete_task`
-- `list_notes`
-- `create_note`
+| Operation | Requires | Notes |
+|---|---|---|
+| `overview` | — | Open tasks, recent notes, clients, upcoming events |
+| `list_tasks` | — | `query` filters title/area |
+| `create_task` | `title` | Duplicate-guarded on title + due_date |
+| `complete_task` | `task_id` | Get the id from `list_tasks` first |
+| `list_notes` | — | `query` filters body/related_to |
+| `create_note` | `body` | |
+| `list_clients` | — | `query` filters name/service/brand |
+| `create_client` | `name` | Duplicate-guarded, case-insensitive |
+| `update_client` | `client_id` + ≥1 field | Rejects an empty patch |
+| `list_events` | — | Upcoming only, unless `query` is given |
+| `create_event` | `title`, `starts_at` | `starts_at` is ISO 8601 with offset |
+| `list_brands` | — | |
+| `create_brand` | `name` | Duplicate-guarded, case-insensitive |
+
+Dates: `due_date` is `YYYY-MM-DD`; `starts_at` / `ends_at` are ISO 8601 with an
+offset. ChatGPT resolves relative dates in `America/Toronto` before calling.
+
+**After adding an operation, re-import the schema in the GPT editor** (Configurar →
+Acciones → gear → Importar desde URL). Otherwise ChatGPT keeps the old contract and
+correctly reports it has no action for the new entity.
 
 Authentication uses a server-only bearer token (`ASSISTANT_API_KEY`, or the legacy
 `SAMY_OS_API_TOKEN`). The endpoint performs database operations with the Supabase
