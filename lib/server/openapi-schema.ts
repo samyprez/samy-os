@@ -42,9 +42,16 @@ export function buildSamyOsOpenApi(origin: string) {
                         "complete_task",
                         "list_notes",
                         "create_note",
+                        "list_clients",
+                        "create_client",
+                        "update_client",
+                        "list_events",
+                        "create_event",
+                        "list_brands",
+                        "create_brand",
                       ],
                       description:
-                        "overview: resumen de pendientes, notas, clientes y próximos eventos. list_tasks: listar tareas (opcionalmente filtradas por query). create_task: crear una tarea nueva (requiere title). complete_task: marcar una tarea como completada (requiere task_id). list_notes: listar notas. create_note: guardar una nota (requiere body).",
+                        "overview: resumen de pendientes, notas, clientes y próximos eventos. list_tasks: listar tareas (filtra con query). create_task: crear tarea (requiere title). complete_task: cerrar una tarea (requiere task_id). list_notes: listar notas. create_note: guardar una nota (requiere body). list_clients: listar clientes (filtra con query). create_client: registrar un cliente (requiere name). update_client: actualizar un cliente (requiere client_id más los campos a cambiar). list_events: próximos eventos del calendario, o búsqueda si mandas query. create_event: agendar un evento (requiere title y starts_at). list_brands: listar marcas. create_brand: registrar una marca (requiere name).",
                     },
                     title: {
                       type: "string",
@@ -81,7 +88,78 @@ export function buildSamyOsOpenApi(origin: string) {
                     },
                     related_to: {
                       type: "string",
-                      description: "Cliente, proyecto o persona con la que se relaciona la nota.",
+                      description:
+                        "Cliente, proyecto o persona con la que se relaciona la nota o el evento.",
+                    },
+                    client_id: {
+                      type: "string",
+                      description:
+                        "UUID del cliente. Obligatorio para update_client. Consíguelo primero con list_clients.",
+                    },
+                    name: {
+                      type: "string",
+                      description: "Nombre del cliente o de la marca. Obligatorio para create_client y create_brand.",
+                    },
+                    contact: {
+                      type: "string",
+                      description: "Contacto principal del cliente: teléfono, email o WhatsApp.",
+                    },
+                    service: {
+                      type: "string",
+                      description: "Servicio que se le presta al cliente, por ejemplo 'sitio web' o 'redes sociales'.",
+                    },
+                    brand: {
+                      type: "string",
+                      description: "Marca a la que pertenece el cliente.",
+                    },
+                    next_step: {
+                      type: "string",
+                      description: "Próximo paso acordado con el cliente.",
+                    },
+                    status: {
+                      type: "string",
+                      description: "Estado del cliente, por ejemplo 'Activo' o 'Pausado'. Solo para update_client.",
+                    },
+                    last_important_message: {
+                      type: "string",
+                      description: "Último mensaje relevante del cliente. Solo para update_client.",
+                    },
+                    starts_at: {
+                      type: "string",
+                      description:
+                        "Fecha y hora de inicio del evento en ISO 8601 con offset, por ejemplo 2026-08-12T15:00:00-04:00. Obligatorio para create_event. Zona horaria America/Toronto.",
+                    },
+                    ends_at: {
+                      type: "string",
+                      description: "Fecha y hora de fin del evento en ISO 8601 con offset. Opcional.",
+                    },
+                    location: {
+                      type: "string",
+                      description: "Lugar del evento.",
+                    },
+                    description: {
+                      type: "string",
+                      description: "Detalle adicional del evento.",
+                    },
+                    type: {
+                      type: "string",
+                      description: "Tipo de marca, por ejemplo 'restaurante' o 'medio digital'.",
+                    },
+                    objective: {
+                      type: "string",
+                      description: "Objetivo de la marca.",
+                    },
+                    platforms: {
+                      type: "string",
+                      description: "Plataformas donde vive la marca, por ejemplo 'Instagram, TikTok'.",
+                    },
+                    content_frequency: {
+                      type: "string",
+                      description: "Frecuencia de publicación de la marca.",
+                    },
+                    notes: {
+                      type: "string",
+                      description: "Notas sueltas sobre la marca.",
                     },
                   },
                 },
@@ -107,10 +185,14 @@ export function buildSamyOsOpenApi(origin: string) {
                       },
                       task: { type: "object" },
                       note: { type: "object" },
+                      client: { type: "object" },
+                      event: { type: "object" },
+                      brand: { type: "object" },
                       tasks: { type: "array", items: { type: "object" } },
                       notes: { type: "array", items: { type: "object" } },
                       clients: { type: "array", items: { type: "object" } },
                       events: { type: "array", items: { type: "object" } },
+                      brands: { type: "array", items: { type: "object" } },
                     },
                   },
                 },

@@ -80,8 +80,30 @@ const text = completion.choices[0]?.message?.content?.trim();
 
 type TaskFields = { title: string; area?: string | null; priority?: string | null; due_date?: string | null; source?: string };
 type NoteFields = { body: string; related_to?: string | null; priority?: string | null; category?: string };
-type EventFields = { title: string; starts_at: string; location?: string | null };
-type ClientFields = { name: string; contact?: string | null; service?: string | null; priority?: string | null };
+type EventFields = {
+  title: string;
+  starts_at: string;
+  location?: string | null;
+  description?: string | null;
+  ends_at?: string | null;
+  related_to?: string | null;
+};
+type ClientFields = {
+  name: string;
+  contact?: string | null;
+  service?: string | null;
+  priority?: string | null;
+  brand?: string | null;
+  next_step?: string | null;
+};
+type BrandFields = {
+  name: string;
+  type?: string | null;
+  objective?: string | null;
+  platforms?: string | null;
+  content_frequency?: string | null;
+  notes?: string | null;
+};
 
 export async function insertTask(admin: SupabaseClient, userId: string, fields: TaskFields) {
   const title = fields.title.trim();
@@ -127,37 +149,94 @@ export async function insertNote(admin: SupabaseClient, userId: string, fields: 
 }
 
 export async function insertEvent(admin: SupabaseClient, userId: string, fields: EventFields) {
+  const title = fields.title.trim();
+  const startsAt = fields.starts_at.trim();
+
+  const duplicate = await admin
+    .from("events")
+    .select("id,title,starts_at")
+    .eq("user_id", userId)
+    .eq("title", title)
+    .eq("starts_at", startsAt)
+    .limit(1);
+  if (duplicate.error) throw new Error(duplicate.error.message);
+  if (duplicate.data?.length) return { duplicate: true as const, event: duplicate.data[0] };
+
   const { data, error } = await admin
   .from("events")
   .insert({
     user_id: userId,
-    title: fields.title,
-    starts_at: fields.starts_at,
-    location: fields.location || null,
+    title,
+    starts_at: startsAt,
+    ends_at: fields.ends_at?.trim() || null,
+    description: fields.description?.trim() || null,
+    location: fields.location?.trim() || null,
+    related_to: fields.related_to?.trim() || null,
     status: "Programado",
   })
-  .select("id,title,starts_at,location,status")
+  .select("id,title,starts_at,ends_at,location,related_to,status")
   .single();
   if (error) throw new Error(error.message);
-  return { event: data };
+  return { duplicate: false as const, event: data };
 }
 
 export async function insertClient(admin: SupabaseClient, userId: string, fields: ClientFields) {
+  const name = fields.name.trim();
+
+  const duplicate = await admin
+    .from("clients")
+    .select("id,name,status")
+    .eq("user_id", userId)
+    .ilike("name", name)
+    .limit(1);
+  if (duplicate.error) throw new Error(duplicate.error.message);
+  if (duplicate.data?.length) return { duplicate: true as const, client: duplicate.data[0] };
+
   const { data, error } = await admin
   .from("clients")
   .insert({
     user_id: userId,
-    name: fields.name,
-    primary_contact: fields.contact || null,
-    service: fields.service || null,
+    name,
+    brand: fields.brand?.trim() || null,
+    primary_contact: fields.contact?.trim() || null,
+    service: fields.service?.trim() || null,
     status: "Activo",
     priority: fields.priority || "Media",
-    next_step: "Definir próximo paso",
+    next_step: fields.next_step?.trim() || "Definir próximo paso",
   })
-  .select("id,name,status,priority")
+  .select("id,name,brand,primary_contact,service,status,priority,next_step")
   .single();
   if (error) throw new Error(error.message);
-  return { client: data };
+  return { duplicate: false as const, client: data };
+}
+
+export async function insertBrand(admin: SupabaseClient, userId: string, fields: BrandFields) {
+  const name = fields.name.trim();
+
+  const duplicate = await admin
+    .from("brands")
+    .select("id,name")
+    .eq("user_id", userId)
+    .ilike("name", name)
+    .limit(1);
+  if (duplicate.error) throw new Error(duplicate.error.message);
+  if (duplicate.data?.length) return { duplicate: true as const, brand: duplicate.data[0] };
+
+  const { data, error } = await admin
+  .from("brands")
+  .insert({
+    user_id: userId,
+    name,
+    type: fields.type?.trim() || null,
+    objective: fields.objective?.trim() || null,
+    platforms: fields.platforms?.trim() || null,
+    content_frequency: fields.content_frequency?.trim() || null,
+    notes: fields.notes?.trim() || null,
+  })
+  .select("id,name,type,objective,platforms,content_frequency")
+  .single();
+  if (error) throw new Error(error.message);
+  return { duplicate: false as const, brand: data };
 }
 
 export type AssistantExecutionResult = { success: boolean; message: string };
@@ -184,13 +263,15 @@ if (action.action === "create_note") {
 
 if (action.action === "create_event") {
   if (!action.title || !action.starts_at) return { success: false, message: "Faltan el título o la fecha del evento." };
-  await insertEvent(admin, userId, { title: action.title, starts_at: action.starts_at, location: action.location });
+  const result = await insertEvent(admin, userId, { title: action.title, starts_at: action.starts_at, location: action.location });
+  if (result.duplicate) return { success: true, message: "Ese evento ya estaba agendado. No lo dupliqué." };
   return { success: true, message: action.response || "Listo, el evento fue agendado." };
 }
 
 if (action.action === "create_client") {
   if (!action.client_name) return { success: false, message: "Falta el nombre del cliente." };
-  await insertClient(admin, userId, { name: action.client_name, contact: action.contact, service: action.service, priority: action.priority });
+  const result = await insertClient(admin, userId, { name: action.client_name, contact: action.contact, service: action.service, priority: action.priority });
+  if (result.duplicate) return { success: true, message: "Ese cliente ya estaba registrado. No lo dupliqué." };
   return { success: true, message: action.response || "Listo, el cliente fue registrado." };
 }
 
