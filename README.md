@@ -76,6 +76,13 @@ SAMY_OS_OWNER_USER_ID   # preferred
 
 Never expose `SUPABASE_SERVICE_ROLE_KEY` or `ASSISTANT_API_KEY` in browser code.
 
+**Finding the service-role key:** the Supabase dashboard no longer uses the words
+"service role" anywhere. It now lives at **Settings → API Keys → "Secret keys"** as an
+`sb_secret_...` value; "Secret key" is simply the new name for the same thing. The
+"Publishable key" (`sb_publishable_...`) on the same page is the public one and will
+not work. Copy with the copy icon rather than selecting by hand — the project
+reference id sits nearby and is easy to grab by mistake.
+
 Confirm they are all live in production with `GET /api/health`; `chatgptGateway`
 must be `true`.
 
