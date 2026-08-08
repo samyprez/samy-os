@@ -8,7 +8,7 @@ export function buildSamyOsOpenApi(origin: string) {
       title: "Samy OS",
       version: "1.0.0",
       description:
-        "Sistema operativo personal de Samy. Permite crear y consultar tareas y notas, marcar tareas como completadas, y ver un resumen general del día. Usa este API cada vez que Samy pida recordar algo, anotar algo, revisar sus pendientes o cerrar una tarea.",
+        "Sistema operativo personal de Samy. Permite crear y consultar tareas y notas, marcar tareas como completadas, ver un resumen general del día, y leer y enviar correos desde su Gmail. Usa este API cada vez que Samy pida recordar algo, anotar algo, revisar sus pendientes, cerrar una tarea, revisar su correo o mandar un email.",
     },
     servers: [{ url: origin }],
     paths: {
@@ -49,9 +49,11 @@ export function buildSamyOsOpenApi(origin: string) {
                         "create_event",
                         "list_brands",
                         "create_brand",
+                        "search_email",
+                        "read_email",
                       ],
                       description:
-                        "overview: resumen de pendientes, notas, clientes y próximos eventos. list_tasks: listar tareas (filtra con query). create_task: crear tarea (requiere title). complete_task: cerrar una tarea (requiere task_id). list_notes: listar notas. create_note: guardar una nota (requiere body). list_clients: listar clientes (filtra con query). create_client: registrar un cliente (requiere name). update_client: actualizar un cliente (requiere client_id más los campos a cambiar). list_events: próximos eventos del calendario, o búsqueda si mandas query. create_event: agendar un evento (requiere title y starts_at). list_brands: listar marcas. create_brand: registrar una marca (requiere name).",
+                        "overview: resumen de pendientes, notas, clientes y próximos eventos. list_tasks: listar tareas (filtra con query). create_task: crear tarea (requiere title). complete_task: cerrar una tarea (requiere task_id). list_notes: listar notas. create_note: guardar una nota (requiere body). list_clients: listar clientes (filtra con query). create_client: registrar un cliente (requiere name). update_client: actualizar un cliente (requiere client_id más los campos a cambiar). list_events: próximos eventos del calendario, o búsqueda si mandas query. create_event: agendar un evento (requiere title y starts_at). list_brands: listar marcas. create_brand: registrar una marca (requiere name). search_email: buscar correos en el Gmail de Samy con la sintaxis de Gmail en query (por ejemplo 'from:cliente@correo.com', 'is:unread', 'newer_than:7d'); devuelve remitente, asunto, fecha y un extracto, más el id de cada mensaje. read_email: leer un correo completo (requiere message_id, sacado antes de search_email); úsalo cuando el extracto no alcance para responder.",
                     },
                     title: {
                       type: "string",
@@ -80,7 +82,7 @@ export function buildSamyOsOpenApi(origin: string) {
                     query: {
                       type: "string",
                       description:
-                        "Texto de búsqueda para list_tasks o list_notes. Filtra por título/área o por contenido.",
+                        "Texto de búsqueda para list_tasks o list_notes. Filtra por título/área o por contenido. Para search_email usa la sintaxis de búsqueda de Gmail, por ejemplo 'from:maria@correo.com newer_than:14d' o 'subject:factura is:unread'.",
                     },
                     body: {
                       type: "string",
@@ -161,6 +163,16 @@ export function buildSamyOsOpenApi(origin: string) {
                       type: "string",
                       description: "Notas sueltas sobre la marca.",
                     },
+                    limit: {
+                      type: "integer",
+                      description:
+                        "Cantidad de correos a devolver en search_email. Por defecto 10, máximo 25.",
+                    },
+                    message_id: {
+                      type: "string",
+                      description:
+                        "Id del mensaje de Gmail. Obligatorio para read_email. Consíguelo primero con search_email.",
+                    },
                   },
                 },
               },
@@ -193,6 +205,15 @@ export function buildSamyOsOpenApi(origin: string) {
                       clients: { type: "array", items: { type: "object" } },
                       events: { type: "array", items: { type: "object" } },
                       brands: { type: "array", items: { type: "object" } },
+                      email: {
+                        type: "object",
+                        description: "Correo completo devuelto por read_email, con body ya en texto plano.",
+                      },
+                      emails: {
+                        type: "array",
+                        items: { type: "object" },
+                        description: "Resultados de search_email: id, thread_id, from, to, subject, date y snippet.",
+                      },
                     },
                   },
                 },
@@ -204,12 +225,94 @@ export function buildSamyOsOpenApi(origin: string) {
           },
         },
       },
+      "/api/chatgpt/send-email": {
+        post: {
+          operationId: "samyOsSendEmail",
+          summary: "Enviar un correo desde el Gmail de Samy",
+          description:
+            "Envía un correo real desde la cuenta de Gmail de Samy. Úsalo solo cuando Samy pida explícitamente enviar, contestar o mandar un correo. Antes de llamar, muéstrale el destinatario, el asunto y el texto completo y espera su confirmación. Si Samy nombra a un cliente en vez de dar una dirección, busca primero su contacto con la operación list_clients de la acción samyOs y usa el email que aparezca ahí; si no encuentras una dirección, pregúntasela en vez de inventarla. Para responder dentro de una conversación existente, busca el mensaje con search_email y pasa su id en reply_to_message_id: así el correo queda en el mismo hilo y el asunto lleva 'Re:' automáticamente. Escribe el cuerpo en el idioma en que Samy se dirige al destinatario, normalmente español.",
+          // The main gateway stays non-consequential so ChatGPT does not prompt
+          // on every task and note. Sending mail is irreversible and reaches a
+          // third party, so it must always show the recipient and body and wait
+          // for a confirmation. The flag is per-operation, which is exactly why
+          // send gets its own path instead of being another `operation` value.
+          "x-openai-isConsequential": true,
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["to", "subject", "body"],
+                  properties: {
+                    to: {
+                      type: "string",
+                      description:
+                        "Dirección del destinatario. Para varios, sepáralos con coma. Nunca la inventes: si Samy nombró a un cliente, sácala de list_clients o pregúntale.",
+                    },
+                    subject: {
+                      type: "string",
+                      description: "Asunto del correo. Obligatorio, breve y concreto.",
+                    },
+                    body: {
+                      type: "string",
+                      description:
+                        "Cuerpo del correo en texto plano. Usa saltos de línea reales para separar párrafos y cierra con el nombre de Samy.",
+                    },
+                    cc: {
+                      type: "string",
+                      description: "Direcciones en copia, separadas por coma. Opcional.",
+                    },
+                    reply_to_message_id: {
+                      type: "string",
+                      description:
+                        "Id del mensaje al que se responde, obtenido con search_email. Mantiene el correo en el mismo hilo y añade 'Re:' al asunto si falta.",
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description: "Correo enviado",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      ok: { type: "boolean" },
+                      message: {
+                        type: "string",
+                        description: "Confirmación en español para mostrarle a Samy.",
+                      },
+                      email: {
+                        type: "object",
+                        description: "Id, thread_id, destinatario y asunto del correo enviado.",
+                      },
+                      error: {
+                        type: "string",
+                        description: "Motivo por el que no se pudo enviar, por ejemplo que falte conectar Gmail.",
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            "400": { description: "Falta to, subject o body" },
+            "401": { description: "Token inválido o ausente" },
+            "500": { description: "Error de configuración del servidor o de la API de Gmail" },
+          },
+        },
+      },
       "/api/health": {
         get: {
           operationId: "samyOsHealth",
           summary: "Revisar el estado de Samy OS",
           description:
-            "Comprueba que Supabase, las tablas, OpenAI y la puerta de entrada de ChatGPT estén configurados. No requiere token.",
+            "Comprueba que Supabase, las tablas, OpenAI, Gmail y la puerta de entrada de ChatGPT estén configurados. No requiere token.",
           responses: {
             "200": {
               description: "Estado del sistema",
@@ -226,6 +329,11 @@ export function buildSamyOsOpenApi(origin: string) {
                         type: "boolean",
                         description:
                           "false significa que faltan variables de entorno y ChatGPT no puede escribir.",
+                      },
+                      gmail: {
+                        type: "object",
+                        description:
+                          "configured dice si están las tres variables de Google; works dice si el refresh token todavía sirve; address es la cuenta conectada.",
                       },
                     },
                   },

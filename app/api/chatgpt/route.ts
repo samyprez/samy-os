@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { assertSamyOsApiAuth, getSamyOsAdmin, getSamyOsOwnerId } from "@/lib/server/samy-os-admin";
 import { insertTask, insertNote, insertEvent, insertClient, insertBrand } from "@/lib/server/assistant-engine";
+import { gmailConfigured, missingGmailEnvVars, readEmail, searchEmails } from "@/lib/server/gmail";
 
 export const runtime = "nodejs";
 
@@ -17,7 +18,9 @@ type Operation =
 | "list_events"
 | "create_event"
 | "list_brands"
-| "create_brand";
+| "create_brand"
+| "search_email"
+| "read_email";
 
 type Input = {
   operation?: Operation;
@@ -49,6 +52,9 @@ type Input = {
   platforms?: string | null;
   content_frequency?: string | null;
   notes?: string | null;
+  // email
+  limit?: number | null;
+  message_id?: string | null;
 };
 
 function unauthorized() {
@@ -215,6 +221,27 @@ export async function POST(request: Request) {
     });
     if (result.duplicate) return NextResponse.json({ ok: true, duplicate: true, brand: result.brand, message: "La marca ya existía y no fue duplicada." });
     return NextResponse.json({ ok: true, brand: result.brand, message: `Marca creada: ${result.brand.name}` });
+  }
+
+  if (operation === "search_email" || operation === "read_email") {
+    // A missing refresh token is a setup gap, not a crash: answer with the
+    // exact variable names so Samy can fix it instead of seeing a 500.
+    if (!gmailConfigured()) {
+      return NextResponse.json({
+        ok: false,
+        error: `Gmail no está conectado. Faltan estas variables en Vercel: ${missingGmailEnvVars().join(", ")}.`,
+      });
+    }
+
+    if (operation === "search_email") {
+      const emails = await searchEmails(input.query?.trim() || "", input.limit ?? 10);
+      return NextResponse.json({ ok: true, emails });
+    }
+
+    const messageId = input.message_id?.trim();
+    if (!messageId) return NextResponse.json({ ok: false, error: "message_id is required" }, { status: 400 });
+    const email = await readEmail(messageId);
+    return NextResponse.json({ ok: true, email });
   }
 
   return NextResponse.json({ ok: false, error: `Unsupported operation: ${operation}` }, { status: 400 });

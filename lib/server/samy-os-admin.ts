@@ -23,6 +23,15 @@ function matchesGatewayToken(received: string) {
   return timingSafeEqual(a, b);
 }
 
+/**
+ * Same secret, compared the same way, for the few endpoints a browser reaches
+ * by plain redirect and so cannot send an Authorization header — currently only
+ * the one-time Google OAuth start.
+ */
+export function matchesSamyOsSecret(received: string) {
+  return matchesGatewayToken(received);
+}
+
 export function assertSamyOsApiAuth(request: Request) {
   const expected = (process.env.ASSISTANT_API_KEY || process.env.SAMY_OS_API_TOKEN || "").trim();
   if (!expected) throw new Error("Missing ASSISTANT_API_KEY");

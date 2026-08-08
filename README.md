@@ -41,6 +41,10 @@ Supported operations:
 | `create_event` | `title`, `starts_at` | `starts_at` is ISO 8601 with offset |
 | `list_brands` | — | |
 | `create_brand` | `name` | Duplicate-guarded, case-insensitive |
+| `search_email` | — | `query` uses Gmail search syntax; `limit` defaults to 10, caps at 25 |
+| `read_email` | `message_id` | Get the id from `search_email` first |
+
+Sending is **not** on this endpoint — see [Gmail](#gmail) for `POST /api/chatgpt/send-email`.
 
 Dates: `due_date` is `YYYY-MM-DD`; `starts_at` / `ends_at` are ISO 8601 with an
 offset. ChatGPT resolves relative dates in `America/Toronto` before calling.
@@ -72,6 +76,12 @@ OPENAI_API_KEY
 ASSISTANT_API_KEY
 SAMY_OS_OWNER_USER_ID   # preferred
 # or SAMY_OS_OWNER_EMAIL
+
+# Gmail only. Everything else works without these; email operations
+# return ok:false naming the missing variable instead of failing.
+GOOGLE_CLIENT_ID
+GOOGLE_CLIENT_SECRET
+GOOGLE_REFRESH_TOKEN
 ```
 
 Never expose `SUPABASE_SERVICE_ROLE_KEY` or `ASSISTANT_API_KEY` in browser code.
@@ -127,9 +137,97 @@ curl -s -X POST https://samy-os-seven.vercel.app/api/chatgpt \
   -d '{"operation":"create_task","title":"Llamar a Salami","due_date":"2026-08-08"}'
 ```
 
+## Gmail
+
+Samy OS reads and sends mail through the Gmail REST API using a long-lived
+refresh token. Scopes are `gmail.readonly` and `gmail.send` only — nothing here
+can delete or modify existing mail.
+
+### 1. Google Cloud setup (once)
+
+1. [Google Cloud Console](https://console.cloud.google.com/) → **Create project**
+   (e.g. `samy-os`).
+2. **APIs & Services → Library** → search **Gmail API** → **Enable**.
+3. **APIs & Services → OAuth consent screen** → User type **External** → fill in
+   app name, support email and developer email.
+   - Leave publishing status on **Testing**. Under **Audience → Test users**, add
+     Samy's own Gmail address. Testing mode is correct for a single-user tool: it
+     skips Google's verification review entirely.
+   - The trade-off: refresh tokens issued by an app in Testing expire after
+     **7 days**. If `/api/health` starts reporting `gmail.works: false` with an
+     `invalid_grant` error, re-run step 5 to mint a new one. Publishing the app
+     (**Publish app**, no review needed for a personal Workspace/consumer account
+     with sensitive scopes only in testing) removes that expiry.
+4. **APIs & Services → Credentials → Create credentials → OAuth client ID** →
+   application type **Web application**.
+   - Under **Authorized redirect URIs** add:
+     `https://samy-os-seven.vercel.app/api/google/callback`
+   - Add `http://localhost:3000/api/google/callback` too if you want to run the
+     flow locally.
+   - Copy the **Client ID** and **Client secret**.
+
+### 2. Mint the refresh token (once)
+
+Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in Vercel and redeploy, then
+open this in a browser, signed in as Samy:
+
+```text
+https://samy-os-seven.vercel.app/api/google/auth?token=<ASSISTANT_API_KEY>
+```
+
+The route is **not** public — it takes the same bearer token as the gateway,
+passed in the query string because a browser following a redirect cannot set an
+`Authorization` header.
+
+Approve the consent screen. The callback prints the refresh token **once**;
+Google never shows it again. Copy it immediately.
+
+### 3. Vercel variables
+
+```text
+GOOGLE_CLIENT_ID
+GOOGLE_CLIENT_SECRET
+GOOGLE_REFRESH_TOKEN
+```
+
+Redeploy, then confirm with `GET /api/health` — `gmail.works` must be `true` and
+`gmail.address` must show the connected account. `gmail.configured: true` with
+`works: false` means the variables exist but the token is dead; the underlying
+Google error is in `gmail.error`.
+
+### Sending is a separate endpoint, on purpose
+
+```text
+POST /api/chatgpt/send-email    operationId: samyOsSendEmail
+{ "to": "...", "subject": "...", "body": "...", "cc": "...", "reply_to_message_id": "..." }
+```
+
+`/api/chatgpt` is marked `x-openai-isConsequential: false` so ChatGPT does not
+prompt before every task and note — without that, hands-free voice use is
+impossible. But sending mail is irreversible and reaches a third party, so it
+must always show the recipient and body and wait for Samy's confirmation.
+
+That flag is **per-operation**, not per-field. Adding `send_email` as another
+`operation` value on the main gateway would have forced one setting on both.
+Two paths is the only way to get both behaviours, which is why send lives on its
+own path and carries `x-openai-isConsequential: true`.
+
+Both paths use the same `ASSISTANT_API_KEY` bearer token, and both are covered by
+the same imported schema — **re-import the schema in the GPT editor** after
+deploying, or ChatGPT will not know `samyOsSendEmail` exists.
+
+Passing `reply_to_message_id` (an id from `search_email`) sets `In-Reply-To` and
+`References` and posts to the original `threadId`, so replies thread properly
+instead of starting a new conversation.
+
 ## Health check
 
-`GET /api/health` reports whether Supabase tables, OpenAI and the ChatGPT gateway configuration are ready without exposing secret values.
+`GET /api/health` reports whether Supabase tables, OpenAI, Gmail and the ChatGPT gateway configuration are ready without exposing secret values.
+
+It distinguishes *configured* from *actually works*: the service-role key and the
+Gmail refresh token are both exercised with a real call, because a key copied
+from the wrong project — or a refresh token Google already revoked — is
+"configured" and still fails every request.
 
 ## Local development
 

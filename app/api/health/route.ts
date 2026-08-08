@@ -1,8 +1,43 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getSamyOsAdmin, getSamyOsOwnerId } from "@/lib/server/samy-os-admin";
+import { getGmailAddress, gmailConfigured, missingGmailEnvVars } from "@/lib/server/gmail";
 
 export const runtime = "nodejs";
+
+type GmailHealth = {
+  configured: boolean;
+  works: boolean;
+  address: string | null;
+  missing: string[];
+  error: string | null;
+};
+
+// Same reason the service-role key is exercised rather than merely counted:
+// a refresh token that Google revoked — or one minted against a different OAuth
+// client — is still "configured" and still fails every send. Only a real call
+// tells them apart.
+async function checkGmail(): Promise<GmailHealth> {
+  const configured = gmailConfigured();
+  const result: GmailHealth = {
+    configured,
+    works: false,
+    address: null,
+    missing: missingGmailEnvVars(),
+    error: null,
+  };
+  if (!configured) return result;
+
+  try {
+    const address = await getGmailAddress();
+    result.works = Boolean(address);
+    result.address = address || null;
+    if (!address) result.error = "Gmail no devolvió una dirección";
+  } catch (error) {
+    result.error = error instanceof Error ? error.message : "Gmail check failed";
+  }
+  return result;
+}
 
 export async function GET() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -12,6 +47,7 @@ export async function GET() {
   const gatewayTokenConfigured = Boolean(process.env.ASSISTANT_API_KEY || process.env.SAMY_OS_API_TOKEN);
   const ownerConfigured = Boolean(process.env.SAMY_OS_OWNER_USER_ID || process.env.SAMY_OS_OWNER_EMAIL);
   const chatgptGatewayConfigured = serviceRoleConfigured && gatewayTokenConfigured && ownerConfigured;
+  const gmail = await checkGmail();
 
   if (!supabaseUrl || !supabaseKey) {
     return NextResponse.json(
@@ -20,6 +56,7 @@ export async function GET() {
         supabase: false,
         openai: openAIConfigured,
         chatgptGateway: chatgptGatewayConfigured,
+        gmail,
         error: "Missing Supabase environment variables",
       },
       { status: 500 },
@@ -77,6 +114,7 @@ export async function GET() {
       tablesReady,
       openai: openAIConfigured,
       chatgptGateway: gatewayReady,
+      gmail,
       gatewayRequirements: {
         serviceRole: serviceRoleConfigured,
         serviceRoleWorks,
@@ -95,6 +133,7 @@ export async function GET() {
         supabase: false,
         openai: openAIConfigured,
         chatgptGateway: chatgptGatewayConfigured,
+        gmail,
         error: error instanceof Error ? error.message : "Supabase health check failed",
       },
       { status: 500 },
