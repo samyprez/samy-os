@@ -137,6 +137,38 @@ curl -s -X POST https://samy-os-seven.vercel.app/api/chatgpt \
   -d '{"operation":"create_task","title":"Llamar a Salami","due_date":"2026-08-08"}'
 ```
 
+## Dashboard gateway (browser + voice)
+
+`POST /api/dashboard` is the session-authenticated twin of `/api/chatgpt`: same
+operations, same `runGatewayOperation` brain (`lib/server/gateway-operations.ts`),
+but it accepts a signed-in Samy OS user's Supabase access token instead of the
+`ASSISTANT_API_KEY` bearer token, via `assertSamyOsCaller`. This is what the
+Email section in the dashboard calls to search and read mail, and what a
+future dashboard feature can call for any other read/list/complete/update
+operation — without ever shipping the gateway secret to the browser.
+
+Sending mail has its own session-authenticated path too, `POST
+/api/dashboard/send-email`, called only by the dashboard's own "Enviar"
+button after Samy has reviewed the recipient and body on screen — the UI
+always confirms before calling it.
+
+### Walie's browser voice UI
+
+`WalieVoice.tsx` (the mic button on the dashboard) now supports the same
+core actions as the ChatGPT gateway: `create_task`, `create_note`,
+`create_event`, `create_client`, `create_brand`, `complete_task`,
+`update_client`, `query` (spoken pending-tasks summaries), and `search_email`
+(spoken sender + subject results). `POST /api/walie` interprets the
+transcript with OpenAI (`interpretMessage`) and now also executes it
+server-side (`runAssistantAction`) against the same Supabase tables and Gmail
+module the rest of the app uses, so voice, ChatGPT, and the dashboard UI can
+never drift out of sync with each other.
+
+Voice never sends email on its own — asked to send something, Walie tells
+Samy to review and confirm it from the Email section instead. Reading a
+specific email's full body by voice isn't wired either; voice search lists
+matches (sender + subject) and Samy opens the one he wants in the dashboard.
+
 ## Gmail
 
 Samy OS reads and sends mail through the Gmail REST API using a long-lived

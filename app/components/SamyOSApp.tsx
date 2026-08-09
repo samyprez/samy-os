@@ -1,18 +1,20 @@
 "use client";
 
-import { CalendarDays, CheckCircle2, ClipboardList, HeartPulse, LayoutDashboard, LogOut, Menu, NotebookPen, Plus, Search, Sparkles, Store, Trash2, Users, X } from "lucide-react";
+import { CalendarDays, CheckCircle2, ClipboardList, HeartPulse, LayoutDashboard, LogOut, Mail, Menu, NotebookPen, Plus, Search, Send, Sparkles, Store, Trash2, Users, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
-type Section = "Dashboard" | "Clientes" | "Pendientes" | "Calendario" | "Marcas" | "Notas" | "Salud";
+type Section = "Dashboard" | "Clientes" | "Pendientes" | "Calendario" | "Marcas" | "Notas" | "Salud" | "Email";
 type Client = { id:string; name:string; brand:string|null; primary_contact:string|null; service:string|null; status:string; priority:string; next_step:string|null };
 type Task = { id:string; client_id:string|null; area:string|null; title:string; priority:string; status:string; due_date:string|null };
 type Brand = { id:string; name:string; type:string|null; objective:string|null };
 type Note = { id:string; category:string|null; body:string; related_to:string|null; priority:string|null };
 type EventItem = { id:string; title:string; description:string|null; starts_at:string; location:string|null; status:string };
 type Health = { id:string; entry_date:string; sleep_hours:number|null; energy_level:number|null; water_glasses:number|null; movement_minutes:number|null; mood:string|null; notes:string|null };
+type EmailSummary = { id:string; thread_id:string; from:string; to:string; subject:string; date:string; snippet:string };
+type EmailDetail = EmailSummary & { body:string; truncated:boolean };
 
-const nav = [["Dashboard",LayoutDashboard],["Clientes",Users],["Pendientes",ClipboardList],["Calendario",CalendarDays],["Marcas",Store],["Notas",NotebookPen],["Salud",HeartPulse]] as const;
+const nav = [["Dashboard",LayoutDashboard],["Clientes",Users],["Pendientes",ClipboardList],["Calendario",CalendarDays],["Marcas",Store],["Notas",NotebookPen],["Salud",HeartPulse],["Email",Mail]] as const;
 const starterClients = [
   { name:"Salami Sibao", brand:"Amazing Solutions", primary_contact:"Orian", service:"Website + publicidad mensual", status:"Activo", priority:"Alta", next_step:"Terminar actualización web y seguimiento en Toronto." },
   { name:"MiKiosko.ca", brand:"Amazing Solutions / TorontoDominicano", primary_contact:"Por confirmar", service:"Contenido + publicidad mensual", status:"Activo", priority:"Alta", next_step:"Crear contenido con productos reales y colocar banners." },
@@ -108,6 +110,26 @@ export default function SamyOSApp(){
 
   async function logout(){ await supabase.auth.signOut(); window.location.href="/login"; }
 
+  async function callDashboard(payload:Record<string,unknown>){
+    const {data:sessionData}=await supabase.auth.getSession();
+    const accessToken=sessionData.session?.access_token;
+    if(!accessToken)throw new Error("Tu sesión expiró. Vuelve a iniciar sesión.");
+    const response=await fetch("/api/dashboard",{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${accessToken}`},body:JSON.stringify(payload)});
+    const data=await response.json();
+    if(!response.ok||data.ok===false)throw new Error(data.error||"Algo salió mal.");
+    return data;
+  }
+
+  async function sendEmailConfirmed(input:{to:string;subject:string;body:string;cc?:string|null;reply_to_message_id?:string|null}){
+    const {data:sessionData}=await supabase.auth.getSession();
+    const accessToken=sessionData.session?.access_token;
+    if(!accessToken)throw new Error("Tu sesión expiró. Vuelve a iniciar sesión.");
+    const response=await fetch("/api/dashboard/send-email",{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${accessToken}`},body:JSON.stringify(input)});
+    const data=await response.json();
+    if(!response.ok||data.ok===false)throw new Error(data.error||"No se pudo enviar el correo.");
+    return data;
+  }
+
   function runAssistant(){
     const q=assistant.toLowerCase().trim(); if(!q)return;
     const salami=tasks.filter(t=>(t.area??"").toLowerCase().includes("salami")&&t.status!=="Completado");
@@ -140,7 +162,8 @@ export default function SamyOSApp(){
         {section==="Calendario"&&<Events items={events} add={(p:any)=>insert("events",p,r=>setEvents(x=>[...x,r].sort((a,b)=>a.starts_at.localeCompare(b.starts_at))))} remove={(id:string)=>remove("events",id,()=>setEvents(x=>x.filter(i=>i.id!==id)))}/>} 
         {section==="Marcas"&&<Brands items={brands} add={(p:any)=>insert("brands",p,r=>setBrands(x=>[...x,r]))} remove={(id:string)=>remove("brands",id,()=>setBrands(x=>x.filter(i=>i.id!==id)))}/>} 
         {section==="Notas"&&<Notes items={notes} add={(p:any)=>insert("notes",p,r=>setNotes(x=>[r,...x]))} remove={(id:string)=>remove("notes",id,()=>setNotes(x=>x.filter(i=>i.id!==id)))}/>} 
-        {section==="Salud"&&<HealthView items={health} add={(p:any)=>insert("health_entries",p,r=>setHealth(x=>[r,...x]))} remove={(id:string)=>remove("health_entries",id,()=>setHealth(x=>x.filter(i=>i.id!==id)))}/>} 
+        {section==="Salud"&&<HealthView items={health} add={(p:any)=>insert("health_entries",p,r=>setHealth(x=>[r,...x]))} remove={(id:string)=>remove("health_entries",id,()=>setHealth(x=>x.filter(i=>i.id!==id)))}/>}
+        {section==="Email"&&<EmailSection call={callDashboard} send={sendEmailConfirmed} notify={setNotice}/>} 
       </div></section>
   </div></main>;
 }
@@ -156,3 +179,119 @@ function Events({items,add,remove}:any){const [title,setTitle]=useState("");cons
 function Brands({items,add,remove}:any){const [name,setName]=useState("");const [objective,setObjective]=useState("");return <><FormBox><input className={input} placeholder="Marca" value={name} onChange={e=>setName(e.target.value)}/><input className={input} placeholder="Objetivo" value={objective} onChange={e=>setObjective(e.target.value)}/><button className={`${btn} md:col-span-2`} onClick={()=>{if(name){add({name,type:"Marca",objective:objective||null});setName("");setObjective("")}}}><Plus size={17}/>Crear marca</button></FormBox><div className="grid gap-4 md:grid-cols-3">{items.map((b:Brand)=><article className={card} key={b.id}><div className="flex justify-between"><Store className="text-cyan-300"/><Delete onClick={()=>remove(b.id)}/></div><h3 className="mt-4 font-semibold">{b.name}</h3><p className="text-sm text-zinc-500">{b.type}</p><p className="mt-3 text-sm">{b.objective}</p></article>)}</div></>}
 function Notes({items,add,remove}:any){const [body,setBody]=useState("");const [related,setRelated]=useState("");return <><FormBox><textarea className={`${input} min-h-24 md:col-span-2`} placeholder="Escribe una nota" value={body} onChange={e=>setBody(e.target.value)}/><input className={input} placeholder="Relacionado con" value={related} onChange={e=>setRelated(e.target.value)}/><button className={btn} onClick={()=>{if(body){add({body,related_to:related||null,category:"General",priority:"Media"});setBody("");setRelated("")}}}><Plus size={17}/>Guardar nota</button></FormBox><div className="grid gap-4 md:grid-cols-2">{items.map((n:Note)=><article className={card} key={n.id}><div className="flex justify-end"><Delete onClick={()=>remove(n.id)}/></div><p className="whitespace-pre-wrap">{n.body}</p><p className="mt-3 text-sm text-zinc-500">{n.related_to??"General"}</p></article>)}</div></>}
 function HealthView({items,add,remove}:any){const [sleep,setSleep]=useState("");const [energy,setEnergy]=useState("");const [mood,setMood]=useState("");const [notes,setNotes]=useState("");return <><FormBox><input className={input} type="number" step="0.5" placeholder="Horas de sueño" value={sleep} onChange={e=>setSleep(e.target.value)}/><input className={input} type="number" min="1" max="10" placeholder="Energía 1-10" value={energy} onChange={e=>setEnergy(e.target.value)}/><input className={input} placeholder="Ánimo" value={mood} onChange={e=>setMood(e.target.value)}/><input className={input} placeholder="Notas" value={notes} onChange={e=>setNotes(e.target.value)}/><button className={`${btn} md:col-span-2`} onClick={()=>{add({entry_date:new Date().toISOString().slice(0,10),sleep_hours:sleep?Number(sleep):null,energy_level:energy?Number(energy):null,mood:mood||null,notes:notes||null});setSleep("");setEnergy("");setMood("");setNotes("")}}><Plus size={17}/>Registrar salud</button></FormBox><div className={card}>{items.length?items.map((h:Health)=><Row key={h.id} title={h.entry_date} sub={`Sueño: ${h.sleep_hours??"—"}h · Energía: ${h.energy_level??"—"}/10 · Ánimo: ${h.mood??"—"}`} action={<Delete onClick={()=>remove(h.id)}/>}/>):<p className="text-zinc-500">No hay registros de salud.</p>}</div></>}
+
+type ComposeState = { to:string; subject:string; body:string; cc:string; reply_to_message_id:string|null };
+const emptyCompose:ComposeState = { to:"", subject:"", body:"", cc:"", reply_to_message_id:null };
+
+function EmailSection({call,send,notify}:{call:(payload:Record<string,unknown>)=>Promise<any>; send:(input:any)=>Promise<any>; notify:(msg:string)=>void}){
+  const [query,setQuery]=useState("");
+  const [results,setResults]=useState<EmailSummary[]>([]);
+  const [searching,setSearching]=useState(false);
+  const [searched,setSearched]=useState(false);
+  const [selected,setSelected]=useState<EmailDetail|null>(null);
+  const [reading,setReading]=useState(false);
+  const [composing,setComposing]=useState(false);
+  const [sending,setSending]=useState(false);
+  const [form,setForm]=useState<ComposeState>(emptyCompose);
+
+  async function runSearch(){
+    setSearching(true); setSearched(true); setSelected(null);
+    try{
+      const data=await call({operation:"search_email",query,limit:15});
+      setResults(data.emails??[]);
+    }catch(error){
+      notify(error instanceof Error?error.message:"No pude buscar los correos.");
+    }finally{ setSearching(false); }
+  }
+
+  async function openEmail(id:string){
+    setReading(true);
+    try{
+      const data=await call({operation:"read_email",message_id:id});
+      setSelected(data.email);
+    }catch(error){
+      notify(error instanceof Error?error.message:"No pude abrir ese correo.");
+    }finally{ setReading(false); }
+  }
+
+  function startReply(){
+    if(!selected)return;
+    const fromAddress=selected.from.match(/<([^>]+)>/)?.[1]??selected.from;
+    setForm({ to:fromAddress, subject:selected.subject, body:"", cc:"", reply_to_message_id:selected.id });
+    setComposing(true);
+  }
+
+  function startCompose(){
+    setForm(emptyCompose);
+    setComposing(true);
+  }
+
+  async function handleSend(){
+    if(!form.to.trim()||!form.subject.trim()||!form.body.trim()){ notify("Falta destinatario, asunto o el cuerpo del correo."); return; }
+    const ok=confirm(`¿Enviar este correo?\n\nPara: ${form.to}\nAsunto: ${form.subject}\n\n${form.body.slice(0,200)}${form.body.length>200?"…":""}`);
+    if(!ok)return;
+    setSending(true);
+    try{
+      const data=await send({ to:form.to.trim(), subject:form.subject.trim(), body:form.body, cc:form.cc.trim()||null, reply_to_message_id:form.reply_to_message_id });
+      notify(data.message||"Correo enviado.");
+      setComposing(false); setForm(emptyCompose);
+    }catch(error){
+      notify(error instanceof Error?error.message:"No pude enviar el correo.");
+    }finally{ setSending(false); }
+  }
+
+  return <div className="grid gap-6 xl:grid-cols-[1.1fr_1fr]">
+    <div className="space-y-4">
+      <div className={`${card} flex gap-3`}>
+        <input className={`${input} flex-1`} placeholder="Buscar correos (remitente, asunto, tema)" value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")void runSearch();}}/>
+        <button className={btn} onClick={()=>void runSearch()} disabled={searching}><Search size={17}/>{searching?"Buscando…":"Buscar"}</button>
+      </div>
+      <button className={`${btn} w-full`} onClick={startCompose}><Plus size={17}/>Redactar correo nuevo</button>
+      <div className={card}>
+        {!searched&&<p className="text-zinc-500">Busca por remitente, asunto o tema — o deja el campo vacío y busca para ver tus correos más recientes.</p>}
+        {searched&&!searching&&!results.length&&<p className="text-zinc-500">No encontré correos con esa búsqueda.</p>}
+        <div className="space-y-2">
+          {results.map(email=>(
+            <button key={email.id} onClick={()=>void openEmail(email.id)} className={`block w-full rounded-xl border border-white/5 bg-black/20 p-4 text-left hover:border-violet-400/40 ${selected?.id===email.id?"border-violet-400/60":""}`}>
+              <p className="truncate font-medium">{email.subject||"(sin asunto)"}</p>
+              <p className="truncate text-sm text-zinc-500">{email.from}</p>
+              <p className="mt-1 truncate text-sm text-zinc-600">{email.snippet}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+
+    <div className="space-y-4">
+      {reading&&<div className={card}><p className="text-zinc-500">Abriendo correo…</p></div>}
+      {!reading&&selected&&(
+        <div className={card}>
+          <h3 className="text-lg font-semibold">{selected.subject||"(sin asunto)"}</h3>
+          <p className="mt-2 text-sm text-zinc-500">De: {selected.from}</p>
+          <p className="text-sm text-zinc-500">Para: {selected.to}</p>
+          <p className="text-sm text-zinc-600">{selected.date}</p>
+          <p className="mt-4 whitespace-pre-wrap text-sm leading-6">{selected.body}</p>
+          {selected.truncated&&<p className="mt-2 text-xs text-zinc-500">(mensaje truncado)</p>}
+          <button className={`${btn} mt-4`} onClick={startReply}><Mail size={17}/>Responder</button>
+        </div>
+      )}
+      {!reading&&!selected&&!composing&&<div className={card}><p className="text-zinc-500">Selecciona un correo de la lista para leerlo aquí.</p></div>}
+
+      {composing&&(
+        <div className={card}>
+          <h3 className="text-lg font-semibold">{form.reply_to_message_id?"Responder correo":"Correo nuevo"}</h3>
+          <div className="mt-4 space-y-3">
+            <input className={`${input} w-full`} placeholder="Para" value={form.to} onChange={e=>setForm(f=>({...f,to:e.target.value}))}/>
+            <input className={`${input} w-full`} placeholder="CC (opcional)" value={form.cc} onChange={e=>setForm(f=>({...f,cc:e.target.value}))}/>
+            <input className={`${input} w-full`} placeholder="Asunto" value={form.subject} onChange={e=>setForm(f=>({...f,subject:e.target.value}))}/>
+            <textarea className={`${input} min-h-40 w-full`} placeholder="Escribe tu correo…" value={form.body} onChange={e=>setForm(f=>({...f,body:e.target.value}))}/>
+          </div>
+          <div className="mt-4 flex gap-3">
+            <button className={btn} onClick={()=>void handleSend()} disabled={sending}><Send size={17}/>{sending?"Enviando…":"Enviar (te voy a pedir confirmación)"}</button>
+            <button className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-zinc-400 hover:bg-white/5" onClick={()=>{setComposing(false);setForm(emptyCompose);}}>Cancelar</button>
+          </div>
+        </div>
+      )}
+    </div>
+  </div>;
+}
