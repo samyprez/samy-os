@@ -229,8 +229,11 @@ export function buildSamyOsOpenApi(origin: string) {
         post: {
           operationId: "samyOsSendEmail",
           summary: "Enviar un correo desde el Gmail de Samy",
+          // ChatGPT rejects any operation description over 300 characters, and a
+          // rejected schema breaks the whole GPT — not just this call. Keep this
+          // short; the detailed guidance lives in the field descriptions below.
           description:
-            "Envía un correo real desde la cuenta de Gmail de Samy. Úsalo solo cuando Samy pida explícitamente enviar, contestar o mandar un correo. Antes de llamar, muéstrale el destinatario, el asunto y el texto completo y espera su confirmación. Si Samy nombra a un cliente en vez de dar una dirección, busca primero su contacto con la operación list_clients de la acción samyOs y usa el email que aparezca ahí; si no encuentras una dirección, pregúntasela en vez de inventarla. Para responder dentro de una conversación existente, busca el mensaje con search_email y pasa su id en reply_to_message_id: así el correo queda en el mismo hilo y el asunto lleva 'Re:' automáticamente. Escribe el cuerpo en el idioma en que Samy se dirige al destinatario, normalmente español.",
+            "Envía un correo real desde el Gmail de Samy. Úsalo solo cuando pida explícitamente enviar o contestar un correo. Antes de llamar, muéstrale el destinatario, el asunto y el texto completo, y espera su confirmación. Si nombra a un cliente en vez de una dirección, búscala antes con list_clients.",
           // The main gateway stays non-consequential so ChatGPT does not prompt
           // on every task and note. Sending mail is irreversible and reaches a
           // third party, so it must always show the recipient and body and wait
