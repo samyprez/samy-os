@@ -51,13 +51,20 @@ export function buildSamyOsOpenApi(origin: string) {
                         "create_brand",
                         "search_email",
                         "read_email",
+                        "list_projects",
+                        "create_project",
+                        "update_project",
+                        "add_project_note",
+                        "list_hub_clients",
+                        "list_invoices",
                       ],
                       description:
-                        "overview: resumen de pendientes, notas, clientes y próximos eventos. list_tasks: listar tareas (filtra con query). create_task: crear tarea (requiere title). complete_task: cerrar una tarea (requiere task_id). list_notes: listar notas. create_note: guardar una nota (requiere body). list_clients: listar clientes (filtra con query). create_client: registrar un cliente (requiere name). update_client: actualizar un cliente (requiere client_id más los campos a cambiar). list_events: próximos eventos del calendario, o búsqueda si mandas query. create_event: agendar un evento (requiere title y starts_at). list_brands: listar marcas. create_brand: registrar una marca (requiere name). search_email: buscar correos en el Gmail de Samy con la sintaxis de Gmail en query (por ejemplo 'from:cliente@correo.com', 'is:unread', 'newer_than:7d'); devuelve remitente, asunto, fecha y un extracto, más el id de cada mensaje. read_email: leer un correo completo (requiere message_id, sacado antes de search_email); úsalo cuando el extracto no alcance para responder.",
+                        "overview: resumen de pendientes, notas, clientes y próximos eventos. list_tasks: listar tareas (filtra con query). create_task: crear tarea (requiere title). complete_task: cerrar una tarea (requiere task_id). list_notes: listar notas. create_note: guardar una nota (requiere body). list_clients: listar clientes (filtra con query). create_client: registrar un cliente (requiere name). update_client: actualizar un cliente (requiere client_id más los campos a cambiar). list_events: próximos eventos del calendario, o búsqueda si mandas query. create_event: agendar un evento (requiere title y starts_at). list_brands: listar marcas. create_brand: registrar una marca (requiere name). search_email: buscar correos en el Gmail de Samy con la sintaxis de Gmail en query (por ejemplo 'from:cliente@correo.com', 'is:unread', 'newer_than:7d'); devuelve remitente, asunto, fecha y un extracto, más el id de cada mensaje. read_email: leer un correo completo (requiere message_id, sacado antes de search_email); úsalo cuando el extracto no alcance para responder. LA OFICINA VIRTUAL (app.amazingsolutions.ca), donde vive el negocio de verdad: list_projects lista el tablero de proyectos, filtra por status o busca con query; create_project crea uno (requiere title); update_project cambia estado, avance o fecha de entrega (requiere project, el nombre basta); add_project_note añade una nota al historial de un proyecto (requiere project y note); list_hub_clients lista los clientes reales del negocio con su email y teléfono; list_invoices lista facturas con montos y vencimientos. Para cualquier cosa de proyectos, clientes del negocio o facturación usa estas, NO las operaciones de tareas y notas personales.",
                     },
                     title: {
                       type: "string",
-                      description: "Nombre de la tarea. Obligatorio para create_task.",
+                      description:
+                        "Nombre de la tarea (create_task) o del proyecto (create_project). Obligatorio en ambas.",
                     },
                     area: {
                       type: "string",
@@ -120,7 +127,8 @@ export function buildSamyOsOpenApi(origin: string) {
                     },
                     status: {
                       type: "string",
-                      description: "Estado del cliente, por ejemplo 'Activo' o 'Pausado'. Solo para update_client.",
+                      description:
+                        "Para update_client, el estado del cliente ('Activo', 'Pausado'). Para los proyectos de la oficina virtual (list_projects, create_project, update_project), uno de: pendiente, en progreso, mensual, urgente, completado. Acepta también los valores internos pending, in_progress, monthly, urgent, completed.",
                     },
                     last_important_message: {
                       type: "string",
@@ -141,7 +149,12 @@ export function buildSamyOsOpenApi(origin: string) {
                     },
                     description: {
                       type: "string",
-                      description: "Detalle adicional del evento.",
+                      description: "Detalle adicional del evento, o del proyecto en create_project y update_project.",
+                    },
+                    delivery_date: {
+                      type: "string",
+                      description:
+                        "Fecha de entrega del proyecto en formato YYYY-MM-DD, ya resuelta a fecha real. Zona horaria America/Toronto. Solo para create_project y update_project.",
                     },
                     type: {
                       type: "string",
@@ -172,6 +185,21 @@ export function buildSamyOsOpenApi(origin: string) {
                       type: "string",
                       description:
                         "Id del mensaje de Gmail. Obligatorio para read_email. Consíguelo primero con search_email.",
+                    },
+                    project: {
+                      type: "string",
+                      description:
+                        "Proyecto de la oficina virtual, por nombre o por id. Obligatorio para update_project y add_project_note. Basta parte del nombre, por ejemplo 'Salami' o 'Prints of hope'. Si varios coinciden, la acción devuelve la lista para que le preguntes a Samy cuál.",
+                    },
+                    progress_percent: {
+                      type: "integer",
+                      description:
+                        "Avance del proyecto, de 0 a 100. Solo para update_project. Al llegar a 100 el proyecto pasa a completado automáticamente.",
+                    },
+                    note: {
+                      type: "string",
+                      description:
+                        "Texto que se añade al historial de notas del proyecto, con fecha. No reemplaza las notas anteriores. Obligatorio para add_project_note.",
                     },
                   },
                 },
@@ -205,6 +233,15 @@ export function buildSamyOsOpenApi(origin: string) {
                       clients: { type: "array", items: { type: "object" } },
                       events: { type: "array", items: { type: "object" } },
                       brands: { type: "array", items: { type: "object" } },
+                      project: { type: "object" },
+                      projects: { type: "array", items: { type: "object" } },
+                      invoices: { type: "array", items: { type: "object" } },
+                      candidates: {
+                        type: "array",
+                        items: { type: "object" },
+                        description:
+                          "Proyectos que coinciden cuando el nombre es ambiguo. Muéstraselos a Samy y pregúntale cuál, no elijas tú.",
+                      },
                       email: {
                         type: "object",
                         description: "Correo completo devuelto por read_email, con body ya en texto plano.",

@@ -2,6 +2,17 @@ import { NextResponse } from "next/server";
 import { assertSamyOsApiAuth, getSamyOsAdmin, getSamyOsOwnerId } from "@/lib/server/samy-os-admin";
 import { insertTask, insertNote, insertEvent, insertClient, insertBrand } from "@/lib/server/assistant-engine";
 import { gmailConfigured, missingGmailEnvVars, readEmail, searchEmails } from "@/lib/server/gmail";
+import {
+  appendHubProjectNote,
+  createHubProject,
+  findHubProject,
+  hubConfigured,
+  listHubClients,
+  listHubInvoices,
+  listHubProjects,
+  missingHubEnvVars,
+  updateHubProject,
+} from "@/lib/server/hub";
 
 export const runtime = "nodejs";
 
@@ -20,7 +31,14 @@ type Operation =
 | "list_brands"
 | "create_brand"
 | "search_email"
-| "read_email";
+| "read_email"
+// Amazing Business Hub — the business system of record
+| "list_projects"
+| "create_project"
+| "update_project"
+| "add_project_note"
+| "list_hub_clients"
+| "list_invoices";
 
 type Input = {
   operation?: Operation;
@@ -55,6 +73,11 @@ type Input = {
   // email
   limit?: number | null;
   message_id?: string | null;
+  // Hub
+  project?: string | null;
+  progress_percent?: number | null;
+  delivery_date?: string | null;
+  note?: string | null;
 };
 
 function unauthorized() {
@@ -242,6 +265,98 @@ export async function POST(request: Request) {
     if (!messageId) return NextResponse.json({ ok: false, error: "message_id is required" }, { status: 400 });
     const email = await readEmail(messageId);
     return NextResponse.json({ ok: true, email });
+  }
+
+  // ---- Amazing Business Hub ----------------------------------------------
+  // These read and write app.amazingsolutions.ca's database directly. They
+  // are separated from the operations above because they are a different
+  // system of record: the Hub holds the business, Samy OS holds Samuel's
+  // personal assistant data.
+
+  const HUB_OPS = new Set([
+    "list_projects",
+    "create_project",
+    "update_project",
+    "add_project_note",
+    "list_hub_clients",
+    "list_invoices",
+  ]);
+
+  if (HUB_OPS.has(operation) && !hubConfigured()) {
+    return NextResponse.json({
+      ok: false,
+      error: `La oficina virtual no está conectada. Faltan estas variables en Vercel: ${missingHubEnvVars().join(", ")}.`,
+    });
+  }
+
+  if (operation === "list_projects") {
+    const projects = await listHubProjects({ query: input.query, status: input.status });
+    return NextResponse.json({ ok: true, projects });
+  }
+
+  if (operation === "create_project") {
+    const title = input.title?.trim();
+    if (!title) return NextResponse.json({ ok: false, error: "title is required" }, { status: 400 });
+    const project = await createHubProject({
+      title,
+      client_name: input.name || input.related_to,
+      description: input.description,
+      status: input.status,
+      delivery_date: input.delivery_date,
+    });
+    return NextResponse.json({ ok: true, project, message: `Proyecto creado: ${project.title}` });
+  }
+
+  if (operation === "update_project" || operation === "add_project_note") {
+    const ref = input.project?.trim() || input.title?.trim();
+    if (!ref) {
+      return NextResponse.json({ ok: false, error: "project is required (nombre o id del proyecto)" }, { status: 400 });
+    }
+
+    const { match, candidates } = await findHubProject(ref);
+    if (!match) {
+      // Ambiguity is reported rather than resolved: updating the wrong
+      // project silently is worse than asking which one.
+      return NextResponse.json({
+        ok: false,
+        error: candidates.length
+          ? `Hay ${candidates.length} proyectos que coinciden con "${ref}". Pregúntale a Samy cuál.`
+          : `No encontré ningún proyecto que coincida con "${ref}".`,
+        candidates: candidates.map((c) => ({ id: c.id, title: c.title, client_name: c.client_name, status: c.status })),
+      });
+    }
+
+    if (operation === "add_project_note") {
+      const note = input.note?.trim() || input.body?.trim();
+      if (!note) return NextResponse.json({ ok: false, error: "note is required" }, { status: 400 });
+      const project = await appendHubProjectNote(match.id, note);
+      return NextResponse.json({ ok: true, project, message: `Nota añadida a ${project.title}.` });
+    }
+
+    try {
+      const project = await updateHubProject(match.id, {
+        status: input.status,
+        progress_percent: input.progress_percent,
+        delivery_date: input.delivery_date,
+        description: input.description,
+      });
+      return NextResponse.json({ ok: true, project, message: `Proyecto actualizado: ${project.title}` });
+    } catch (error) {
+      return NextResponse.json(
+        { ok: false, error: error instanceof Error ? error.message : "No pude actualizar el proyecto." },
+        { status: 400 },
+      );
+    }
+  }
+
+  if (operation === "list_hub_clients") {
+    const clients = await listHubClients(input.query);
+    return NextResponse.json({ ok: true, clients });
+  }
+
+  if (operation === "list_invoices") {
+    const invoices = await listHubInvoices({ status: input.status, query: input.query });
+    return NextResponse.json({ ok: true, invoices });
   }
 
   return NextResponse.json({ ok: false, error: `Unsupported operation: ${operation}` }, { status: 400 });

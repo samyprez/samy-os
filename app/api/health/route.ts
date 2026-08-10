@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getSamyOsAdmin, getSamyOsOwnerId } from "@/lib/server/samy-os-admin";
 import { getGmailAddress, gmailConfigured, missingGmailEnvVars } from "@/lib/server/gmail";
+import { hubConfigured, hubProjectRef, hubReachable, missingHubEnvVars } from "@/lib/server/hub";
 
 export const runtime = "nodejs";
 
@@ -39,6 +40,37 @@ async function checkGmail(): Promise<GmailHealth> {
   return result;
 }
 
+type HubHealth = {
+  configured: boolean;
+  works: boolean;
+  project: string | null;
+  missing: string[];
+  error: string | null;
+};
+
+// Same reasoning as the service-role and Gmail checks: a key that is present
+// but belongs to the wrong Supabase project counts as "configured" and fails
+// every call. Only a real query separates them — and here the failure mode is
+// specific, because the Hub key and Samy OS key have already been swapped once.
+async function checkHub(): Promise<HubHealth> {
+  const configured = hubConfigured();
+  const result: HubHealth = {
+    configured,
+    works: false,
+    project: hubProjectRef(),
+    missing: missingHubEnvVars(),
+    error: null,
+  };
+  if (!configured) return result;
+
+  try {
+    result.works = await hubReachable();
+  } catch (error) {
+    result.error = error instanceof Error ? error.message : "Hub check failed";
+  }
+  return result;
+}
+
 export async function GET() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -48,6 +80,7 @@ export async function GET() {
   const ownerConfigured = Boolean(process.env.SAMY_OS_OWNER_USER_ID || process.env.SAMY_OS_OWNER_EMAIL);
   const chatgptGatewayConfigured = serviceRoleConfigured && gatewayTokenConfigured && ownerConfigured;
   const gmail = await checkGmail();
+  const hub = await checkHub();
 
   if (!supabaseUrl || !supabaseKey) {
     return NextResponse.json(
@@ -57,6 +90,7 @@ export async function GET() {
         openai: openAIConfigured,
         chatgptGateway: chatgptGatewayConfigured,
         gmail,
+        hub,
         error: "Missing Supabase environment variables",
       },
       { status: 500 },
@@ -115,6 +149,7 @@ export async function GET() {
       openai: openAIConfigured,
       chatgptGateway: gatewayReady,
       gmail,
+      hub,
       gatewayRequirements: {
         serviceRole: serviceRoleConfigured,
         serviceRoleWorks,
@@ -134,6 +169,7 @@ export async function GET() {
         openai: openAIConfigured,
         chatgptGateway: chatgptGatewayConfigured,
         gmail,
+        hub,
         error: error instanceof Error ? error.message : "Supabase health check failed",
       },
       { status: 500 },
