@@ -19,21 +19,7 @@ type SpeechRecognitionLike = {
 };
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 
-type WalieAction = {
-  action: "create_task" | "create_note" | "create_event" | "create_client" | "query" | "none";
-  title: string | null;
-  body: string | null;
-  area: string | null;
-  priority: "Alta" | "Media" | "Baja" | null;
-  due_date: string | null;
-  starts_at: string | null;
-  location: string | null;
-  client_name: string | null;
-  contact: string | null;
-  service: string | null;
-  related_to: string | null;
-  response: string;
-};
+type WalieResult = { message: string; success?: boolean; error?: string };
 
 declare global {
   interface Window {
@@ -114,7 +100,7 @@ export default function WalieVoice() {
     window.speechSynthesis.speak(utterance);
   }
 
-  async function interpret(command: string) {
+  async function interpret(command: string): Promise<WalieResult> {
     const { data: sessionData } = await supabase.auth.getSession();
     const accessToken = sessionData.session?.access_token;
     if (!accessToken) throw new Error("Tu sesión expiró. Vuelve a iniciar sesión.");
@@ -131,11 +117,16 @@ export default function WalieVoice() {
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       }),
     });
-    const data = (await response.json()) as WalieAction & { error?: string };
-    if (!response.ok) throw new Error(data.error || "Walie no pudo interpretar la instrucción.");
+    const data = (await response.json()) as WalieResult;
+    if (!response.ok) throw new Error(data.error || data.message || "Walie no pudo interpretar la instrucción.");
     return data;
   }
 
+  // The server (/api/walie) now interprets AND executes the action against
+  // Supabase/Gmail in one step, using the exact same functions as the
+  // ChatGPT gateway and the dashboard. The browser's only job is to show and
+  // speak whatever message comes back — no more duplicating database logic
+  // here, so voice and every other surface always agree.
   async function execute(spoken: string) {
     if (processingRef.current || speakingRef.current) return;
     const command = stripWakePhrase(spoken);
@@ -156,73 +147,8 @@ export default function WalieVoice() {
     setMessage("Walie está entendiendo la instrucción…");
 
     try {
-      const { data, error: authError } = await supabase.auth.getUser();
-      if (authError || !data.user) throw new Error("Tu sesión no está activa. Inicia sesión de nuevo.");
-      const userId = data.user.id;
-
-      const action = await interpret(command);
-
-      if (action.action === "create_task") {
-        if (!action.title) throw new Error("No pude identificar el nombre de la tarea.");
-        const duplicate = await supabase
-          .from("tasks")
-          .select("id")
-          .eq("user_id", userId)
-          .eq("title", action.title)
-          .eq("status", "Pendiente")
-          .limit(1);
-        if (duplicate.error) throw new Error(duplicate.error.message);
-        if (duplicate.data?.length) {
-          const reply = "Esa tarea ya estaba registrada. No la dupliqué.";
-          setMessage(reply);
-          speak(reply);
-          return;
-        }
-        const result = await supabase.from("tasks").insert({
-          user_id: userId,
-          title: action.title,
-          area: action.area || "General",
-          priority: action.priority || "Media",
-          status: "Pendiente",
-          due_date: action.due_date,
-          source: "Walie",
-        });
-        if (result.error) throw new Error(result.error.message);
-      } else if (action.action === "create_note") {
-        if (!action.body) throw new Error("No pude identificar el contenido de la nota.");
-        const result = await supabase.from("notes").insert({
-          user_id: userId,
-          body: action.body,
-          related_to: action.related_to,
-          category: "Walie",
-          priority: action.priority || "Media",
-        });
-        if (result.error) throw new Error(result.error.message);
-      } else if (action.action === "create_event") {
-        if (!action.title || !action.starts_at) throw new Error("Faltan el título o la fecha del evento.");
-        const result = await supabase.from("events").insert({
-          user_id: userId,
-          title: action.title,
-          starts_at: action.starts_at,
-          location: action.location,
-          status: "Programado",
-        });
-        if (result.error) throw new Error(result.error.message);
-      } else if (action.action === "create_client") {
-        if (!action.client_name) throw new Error("Falta el nombre del cliente.");
-        const result = await supabase.from("clients").insert({
-          user_id: userId,
-          name: action.client_name,
-          primary_contact: action.contact,
-          service: action.service,
-          status: "Activo",
-          priority: action.priority || "Media",
-          next_step: "Definir próximo paso",
-        });
-        if (result.error) throw new Error(result.error.message);
-      }
-
-      const reply = action.response || "Listo. Lo guardé.";
+      const result = await interpret(command);
+      const reply = result.message || "Listo.";
       setMessage(reply);
       window.dispatchEvent(new Event("samy-os-data-changed"));
       speak(reply);
@@ -349,6 +275,7 @@ export default function WalieVoice() {
 
             <div className="mt-4 rounded-xl bg-violet-500/10 p-3 text-xs leading-5 text-violet-200">
               Puedes decirlo de una vez: “Walie, crea una tarea para llamar a Salami mañana”. También funciona en dos pasos: “Walie” y luego tu instrucción.
+              <br />Walie también completa tareas, actualiza clientes, responde preguntas y busca correos — pero nunca envía uno sin que tú lo confirmes en la sección de Email.
             </div>
           </section>
         </div>
