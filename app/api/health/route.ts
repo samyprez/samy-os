@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getSamyOsAdmin, getSamyOsOwnerId } from "@/lib/server/samy-os-admin";
 import { getGmailAddress, gmailConfigured, missingGmailEnvVars } from "@/lib/server/gmail";
+import { calendarConfigured, listCalendarEvents } from "@/lib/server/calendar";
 import { hubConfigured, hubProjectRef, hubReachable, missingHubEnvVars } from "@/lib/server/hub";
 
 export const runtime = "nodejs";
@@ -36,6 +37,32 @@ async function checkGmail(): Promise<GmailHealth> {
     if (!address) result.error = "Gmail no devolvió una dirección";
   } catch (error) {
     result.error = error instanceof Error ? error.message : "Gmail check failed";
+  }
+  return result;
+}
+
+type CalendarHealth = {
+  configured: boolean;
+  works: boolean;
+  error: string | null;
+};
+
+// Calendar rides the same Google OAuth client and refresh token as Gmail, so
+// "configured" mirrors Gmail's. "works" is separate on purpose: a refresh
+// token minted before Calendar was added to the consent scope is still
+// "configured" but fails with "insufficient authentication scopes" on every
+// call — that's exactly the state right after this feature ships, until
+// Samuel redoes the Google consent screen once.
+async function checkCalendar(): Promise<CalendarHealth> {
+  const configured = calendarConfigured();
+  const result: CalendarHealth = { configured, works: false, error: null };
+  if (!configured) return result;
+
+  try {
+    await listCalendarEvents({});
+    result.works = true;
+  } catch (error) {
+    result.error = error instanceof Error ? error.message : "Calendar check failed";
   }
   return result;
 }
@@ -80,6 +107,7 @@ export async function GET() {
   const ownerConfigured = Boolean(process.env.SAMY_OS_OWNER_USER_ID || process.env.SAMY_OS_OWNER_EMAIL);
   const chatgptGatewayConfigured = serviceRoleConfigured && gatewayTokenConfigured && ownerConfigured;
   const gmail = await checkGmail();
+  const calendar = await checkCalendar();
   const hub = await checkHub();
 
   if (!supabaseUrl || !supabaseKey) {
@@ -90,6 +118,7 @@ export async function GET() {
         openai: openAIConfigured,
         chatgptGateway: chatgptGatewayConfigured,
         gmail,
+        calendar,
         hub,
         error: "Missing Supabase environment variables",
       },
@@ -149,6 +178,7 @@ export async function GET() {
       openai: openAIConfigured,
       chatgptGateway: gatewayReady,
       gmail,
+      calendar,
       hub,
       gatewayRequirements: {
         serviceRole: serviceRoleConfigured,
@@ -169,6 +199,7 @@ export async function GET() {
         openai: openAIConfigured,
         chatgptGateway: chatgptGatewayConfigured,
         gmail,
+        calendar,
         hub,
         error: error instanceof Error ? error.message : "Supabase health check failed",
       },

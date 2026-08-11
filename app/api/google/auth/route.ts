@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { GMAIL_SCOPES } from "@/lib/server/gmail";
+import { CALENDAR_SCOPES } from "@/lib/server/calendar";
 import { matchesSamyOsSecret, readBearerToken } from "@/lib/server/samy-os-admin";
 
 export const runtime = "nodejs";
@@ -31,7 +32,7 @@ export async function GET(request: Request) {
     client_id: clientId,
     redirect_uri: `${url.origin}/api/google/callback`,
     response_type: "code",
-    scope: GMAIL_SCOPES,
+    scope: `${GMAIL_SCOPES} ${CALENDAR_SCOPES}`,
     // offline is what makes Google issue a refresh token at all, and consent
     // forces a fresh one even if this account already approved the app —
     // otherwise a second run returns an access token only and the setup

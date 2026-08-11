@@ -2,8 +2,15 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
-import { insertEvent, insertBrand } from "@/lib/server/assistant-engine";
+import { insertBrand } from "@/lib/server/assistant-engine";
 import { gmailConfigured, missingGmailEnvVars, readEmail, searchEmails } from "@/lib/server/gmail";
+import {
+  calendarConfigured,
+  createCalendarEvent,
+  deleteCalendarEvent,
+  findCalendarEvent,
+  listCalendarEvents,
+} from "@/lib/server/calendar";
 import {
   appendHubProjectNote,
   createHubClient,
@@ -38,6 +45,7 @@ export type Operation =
   | "update_client"
   | "list_events"
   | "create_event"
+  | "delete_event"
   | "list_brands"
   | "create_brand"
   | "list_health"
@@ -133,8 +141,7 @@ export async function runGatewayOperation(input: GatewayInput, admin: SupabaseCl
   }
 
   if (operation === "overview") {
-    const events = await admin.from("events").select("id,title,starts_at,location,status").eq("user_id", userId).gte("starts_at", new Date().toISOString()).order("starts_at", { ascending: true }).limit(10);
-    if (events.error) throw new Error(events.error.message);
+    const events = calendarConfigured() ? await listCalendarEvents({}) : [];
 
     let tasks: Awaited<ReturnType<typeof listHubProjects>> = [];
     let clients: Awaited<ReturnType<typeof listHubClients>> = [];
@@ -146,7 +153,7 @@ export async function runGatewayOperation(input: GatewayInput, admin: SupabaseCl
       notes = hubNotes;
     }
 
-    return NextResponse.json({ ok: true, tasks, notes, clients, events: events.data });
+    return NextResponse.json({ ok: true, tasks, notes, clients, events });
   }
 
   if (operation === "list_tasks") {
@@ -245,29 +252,49 @@ export async function runGatewayOperation(input: GatewayInput, admin: SupabaseCl
   }
 
   if (operation === "list_events") {
-    let query = admin.from("events").select("id,title,description,starts_at,ends_at,location,related_to,status").eq("user_id", userId).order("starts_at", { ascending: true });
-    if (input.query?.trim()) query = query.or(`title.ilike.%${input.query.trim()}%,location.ilike.%${input.query.trim()}%,related_to.ilike.%${input.query.trim()}%`);
-    else query = query.gte("starts_at", new Date().toISOString());
-    const { data, error } = await query.limit(50);
-    if (error) throw new Error(error.message);
-    return NextResponse.json({ ok: true, events: data });
+    if (!calendarConfigured()) {
+      return NextResponse.json({ ok: false, error: `Google Calendar no está conectado. Faltan: ${missingGmailEnvVars().join(", ")}.` });
+    }
+    const events = await listCalendarEvents({ query: input.query });
+    return NextResponse.json({ ok: true, events });
   }
 
   if (operation === "create_event") {
+    if (!calendarConfigured()) {
+      return NextResponse.json({ ok: false, error: `Google Calendar no está conectado. Faltan: ${missingGmailEnvVars().join(", ")}.` });
+    }
     const title = input.title?.trim();
     const startsAt = input.starts_at?.trim();
     if (!title) return NextResponse.json({ ok: false, error: "title is required" }, { status: 400 });
     if (!startsAt) return NextResponse.json({ ok: false, error: "starts_at is required" }, { status: 400 });
-    const result = await insertEvent(admin, userId, {
+    const event = await createCalendarEvent({
       title,
       starts_at: startsAt,
       ends_at: input.ends_at,
       location: input.location,
       description: input.description,
-      related_to: input.related_to,
     });
-    if (result.duplicate) return NextResponse.json({ ok: true, duplicate: true, event: result.event, message: "El evento ya existía y no fue duplicado." });
-    return NextResponse.json({ ok: true, event: result.event, message: `Evento agendado: ${result.event.title}` });
+    return NextResponse.json({ ok: true, event, message: `Evento agendado en Google Calendar: ${event.title}` });
+  }
+
+  if (operation === "delete_event") {
+    if (!calendarConfigured()) {
+      return NextResponse.json({ ok: false, error: `Google Calendar no está conectado. Faltan: ${missingGmailEnvVars().join(", ")}.` });
+    }
+    const ref = input.task_id?.trim() || input.title?.trim();
+    if (!ref) return NextResponse.json({ ok: false, error: "title (o id) is required" }, { status: 400 });
+    const { match, candidates } = await findCalendarEvent(ref);
+    if (!match) {
+      return NextResponse.json({
+        ok: false,
+        error: candidates.length
+          ? `Hay ${candidates.length} eventos que coinciden con "${ref}". Pregúntale a Samy cuál.`
+          : `No encontré ningún evento que coincida con "${ref}".`,
+        candidates: candidates.map((c) => ({ id: c.id, title: c.title, starts_at: c.starts_at })),
+      });
+    }
+    await deleteCalendarEvent(match.id);
+    return NextResponse.json({ ok: true, message: `Evento cancelado: ${match.title}` });
   }
 
   if (operation === "list_brands") {
