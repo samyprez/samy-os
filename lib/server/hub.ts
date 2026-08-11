@@ -262,6 +262,29 @@ export async function createHubProject(input: {
 const CLIENT_FIELDS =
   "id,company_name,contact_name,email,phone,website,status,service_interest,follow_up_date,comments,is_active,created_at";
 
+export const HUB_CLIENT_STATUSES = ["contacted", "client", "not_interested"] as const;
+export type HubClientStatus = (typeof HUB_CLIENT_STATUSES)[number];
+
+/** Same idea as normalizeProjectStatus: what Samuel says, mapped to the column's check constraint. */
+const CLIENT_STATUS_SYNONYMS: Record<string, HubClientStatus> = {
+  contactado: "contacted",
+  contactada: "contacted",
+  contacted: "contacted",
+  cliente: "client",
+  activo: "client",
+  activa: "client",
+  client: "client",
+  "no interesado": "not_interested",
+  "no interesada": "not_interested",
+  not_interested: "not_interested",
+};
+
+export function normalizeClientStatus(input: string | null | undefined): HubClientStatus | null {
+  if (!input) return null;
+  const key = input.trim().toLowerCase();
+  return CLIENT_STATUS_SYNONYMS[key] ?? null;
+}
+
 export async function listHubClients(query?: string | null) {
   let q = getHubAdmin().from("clients").select(CLIENT_FIELDS);
   const search = query?.trim();
@@ -361,7 +384,13 @@ export async function updateHubClient(
   if (patch.service_interest !== undefined) update.service_interest = patch.service_interest?.trim() || null;
   if (patch.comments !== undefined) update.comments = patch.comments?.trim() || null;
   if (patch.follow_up_date !== undefined) update.follow_up_date = patch.follow_up_date?.trim() || null;
-  if (patch.status !== undefined) update.status = patch.status?.trim() || null;
+  if (patch.status !== undefined && patch.status !== null) {
+    const status = normalizeClientStatus(patch.status);
+    if (!status) {
+      throw new Error(`Estado no válido: "${patch.status}". Usa uno de: ${HUB_CLIENT_STATUSES.join(", ")}.`);
+    }
+    update.status = status;
+  }
 
   if (Object.keys(update).length === 0) throw new Error("No hay nada que actualizar.");
 

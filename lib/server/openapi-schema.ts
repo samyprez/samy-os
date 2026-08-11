@@ -130,7 +130,7 @@ export function buildSamyOsOpenApi(origin: string) {
                     status: {
                       type: "string",
                       description:
-                        "Para update_client, el estado del cliente ('Activo', 'Pausado'). Para los proyectos de la oficina virtual (list_projects, create_project, update_project), uno de: pendiente, en progreso, mensual, urgente, completado. Acepta también los valores internos pending, in_progress, monthly, urgent, completed.",
+                        "Para update_client, uno de: contactado, cliente, no interesado (o los valores internos contacted, client, not_interested). Para las tareas/proyectos (list_tasks, create_task, complete_task y sus sinónimos list_projects/create_project/update_project), uno de: pendiente, en progreso, mensual, urgente, completado. Acepta también los valores internos pending, in_progress, monthly, urgent, completed.",
                     },
                     last_important_message: {
                       type: "string",
