@@ -2,17 +2,20 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
-import { insertTask, insertNote, insertEvent, insertClient, insertBrand } from "@/lib/server/assistant-engine";
+import { insertNote, insertEvent, insertBrand } from "@/lib/server/assistant-engine";
 import { gmailConfigured, missingGmailEnvVars, readEmail, searchEmails } from "@/lib/server/gmail";
 import {
   appendHubProjectNote,
+  createHubClient,
   createHubProject,
+  findHubClient,
   findHubProject,
   hubConfigured,
   listHubClients,
   listHubInvoices,
   listHubProjects,
   missingHubEnvVars,
+  updateHubClient,
   updateHubProject,
 } from "@/lib/server/hub";
 
@@ -89,46 +92,87 @@ export async function runGatewayOperation(input: GatewayInput, admin: SupabaseCl
   const operation = input.operation;
   if (!operation) return NextResponse.json({ ok: false, error: "operation is required" }, { status: 400 });
 
+  // Tasks and projects both live in the Hub now (2026-08-10) — Samy asked to
+  // stop using Samy OS's own `tasks` table entirely so "tarea" and "proyecto"
+  // always land in the same place, app.amazingsolutions.ca. list_tasks,
+  // create_task and complete_task are kept as operation names (ChatGPT's
+  // vocabulary for a spoken "tarea") but are now aliases over Hub projects.
+  const HUB_OPS = new Set<Operation>([
+    "list_tasks",
+    "create_task",
+    "complete_task",
+    "list_projects",
+    "create_project",
+    "update_project",
+    "add_project_note",
+    "list_clients",
+    "create_client",
+    "update_client",
+    "list_hub_clients",
+    "list_invoices",
+  ]);
+
+  if (HUB_OPS.has(operation) && !hubConfigured()) {
+    return NextResponse.json({
+      ok: false,
+      error: `La oficina virtual no está conectada. Faltan estas variables en Vercel: ${missingHubEnvVars().join(", ")}.`,
+    });
+  }
+
   if (operation === "overview") {
-    const [tasks, notes, clients, events] = await Promise.all([
-      admin.from("tasks").select("id,title,area,priority,status,due_date,created_at").eq("user_id", userId).neq("status", "Completado").order("due_date", { ascending: true, nullsFirst: false }).limit(20),
+    const [notes, events] = await Promise.all([
       admin.from("notes").select("id,body,related_to,priority,created_at").eq("user_id", userId).order("created_at", { ascending: false }).limit(10),
-      admin.from("clients").select("id,name,priority,status,next_step").eq("user_id", userId).order("created_at", { ascending: true }).limit(50),
       admin.from("events").select("id,title,starts_at,location,status").eq("user_id", userId).gte("starts_at", new Date().toISOString()).order("starts_at", { ascending: true }).limit(10),
     ]);
-    const error = tasks.error || notes.error || clients.error || events.error;
+    const error = notes.error || events.error;
     if (error) throw new Error(error.message);
-    return NextResponse.json({ ok: true, tasks: tasks.data, notes: notes.data, clients: clients.data, events: events.data });
+
+    let tasks: Awaited<ReturnType<typeof listHubProjects>> = [];
+    let clients: Awaited<ReturnType<typeof listHubClients>> = [];
+    if (hubConfigured()) {
+      const [projects, hubClients] = await Promise.all([listHubProjects({}), listHubClients()]);
+      tasks = projects.filter((p) => p.status !== "completed").slice(0, 20);
+      clients = hubClients.slice(0, 50);
+    }
+
+    return NextResponse.json({ ok: true, tasks, notes: notes.data, clients, events: events.data });
   }
 
   if (operation === "list_tasks") {
-    let query = admin.from("tasks").select("id,title,area,priority,status,due_date,notes,created_at").eq("user_id", userId).order("due_date", { ascending: true, nullsFirst: false });
-    if (input.query?.trim()) query = query.or(`title.ilike.%${input.query.trim()}%,area.ilike.%${input.query.trim()}%`);
-    const { data, error } = await query.limit(50);
-    if (error) throw new Error(error.message);
-    return NextResponse.json({ ok: true, tasks: data });
+    const tasks = await listHubProjects({ query: input.query, status: input.status });
+    return NextResponse.json({ ok: true, tasks });
   }
 
   if (operation === "create_task") {
     const title = input.title?.trim();
     if (!title) return NextResponse.json({ ok: false, error: "title is required" }, { status: 400 });
-    const result = await insertTask(admin, userId, {
+    const task = await createHubProject({
       title,
-      area: input.area,
-      priority: input.priority,
-      due_date: input.due_date?.trim() || null,
-      source: "Gateway",
+      client_name: input.name || input.related_to,
+      description: input.description,
+      status: input.status,
+      delivery_date: input.delivery_date || input.due_date,
     });
-    if (result.duplicate) return NextResponse.json({ ok: true, duplicate: true, task: result.task, message: "La tarea ya existía y no fue duplicada." });
-    return NextResponse.json({ ok: true, task: result.task, message: `Tarea creada: ${result.task.title}` });
+    return NextResponse.json({ ok: true, task, message: `Tarea creada: ${task.title}` });
   }
 
   if (operation === "complete_task") {
-    const taskId = input.task_id?.trim();
-    if (!taskId) return NextResponse.json({ ok: false, error: "task_id is required" }, { status: 400 });
-    const { data, error } = await admin.from("tasks").update({ status: "Completado", updated_at: new Date().toISOString() }).eq("user_id", userId).eq("id", taskId).select("id,title,status").single();
-    if (error) throw new Error(error.message);
-    return NextResponse.json({ ok: true, task: data, message: `Tarea completada: ${data.title}` });
+    const ref = input.task_id?.trim() || input.project?.trim() || input.title?.trim();
+    if (!ref) return NextResponse.json({ ok: false, error: "task_id is required" }, { status: 400 });
+
+    const { match, candidates } = await findHubProject(ref);
+    if (!match) {
+      return NextResponse.json({
+        ok: false,
+        error: candidates.length
+          ? `Hay ${candidates.length} tareas que coinciden con "${ref}". Pregúntale a Samy cuál.`
+          : `No encontré ninguna tarea que coincida con "${ref}".`,
+        candidates: candidates.map((c) => ({ id: c.id, title: c.title, client_name: c.client_name, status: c.status })),
+      });
+    }
+
+    const task = await updateHubProject(match.id, { status: "completed" });
+    return NextResponse.json({ ok: true, task, message: `Tarea completada: ${task.title}` });
   }
 
   if (operation === "list_notes") {
@@ -147,43 +191,45 @@ export async function runGatewayOperation(input: GatewayInput, admin: SupabaseCl
   }
 
   if (operation === "list_clients") {
-    let query = admin.from("clients").select("id,name,brand,primary_contact,service,status,priority,next_step,due_date,last_important_message").eq("user_id", userId).order("created_at", { ascending: true });
-    if (input.query?.trim()) query = query.or(`name.ilike.%${input.query.trim()}%,service.ilike.%${input.query.trim()}%,brand.ilike.%${input.query.trim()}%`);
-    const { data, error } = await query.limit(100);
-    if (error) throw new Error(error.message);
-    return NextResponse.json({ ok: true, clients: data });
+    const clients = await listHubClients(input.query);
+    return NextResponse.json({ ok: true, clients });
   }
 
   if (operation === "create_client") {
     const name = input.name?.trim();
     if (!name) return NextResponse.json({ ok: false, error: "name is required" }, { status: 400 });
-    const result = await insertClient(admin, userId, {
-      name,
-      contact: input.contact,
-      service: input.service,
-      priority: input.priority,
-      brand: input.brand,
-      next_step: input.next_step,
+    const contact = input.contact?.trim();
+    const client = await createHubClient({
+      company_name: name,
+      email: contact?.includes("@") ? contact : undefined,
+      phone: contact && !contact.includes("@") ? contact : undefined,
+      service_interest: input.service,
     });
-    if (result.duplicate) return NextResponse.json({ ok: true, duplicate: true, client: result.client, message: "El cliente ya existía y no fue duplicado." });
-    return NextResponse.json({ ok: true, client: result.client, message: `Cliente creado: ${result.client.name}` });
+    return NextResponse.json({ ok: true, client, message: `Cliente creado: ${client.company_name}` });
   }
 
   if (operation === "update_client") {
-    const clientId = input.client_id?.trim();
-    if (!clientId) return NextResponse.json({ ok: false, error: "client_id is required" }, { status: 400 });
-    const patch: Record<string, string | null> = { updated_at: new Date().toISOString() };
-    if (input.next_step !== undefined) patch.next_step = input.next_step?.trim() || null;
-    if (input.status !== undefined) patch.status = input.status?.trim() || null;
-    if (input.priority !== undefined) patch.priority = input.priority || null;
-    if (input.service !== undefined) patch.service = input.service?.trim() || null;
-    if (input.contact !== undefined) patch.primary_contact = input.contact?.trim() || null;
-    if (input.due_date !== undefined) patch.due_date = input.due_date?.trim() || null;
-    if (input.last_important_message !== undefined) patch.last_important_message = input.last_important_message?.trim() || null;
-    if (Object.keys(patch).length === 1) return NextResponse.json({ ok: false, error: "nothing to update" }, { status: 400 });
-    const { data, error } = await admin.from("clients").update(patch).eq("user_id", userId).eq("id", clientId).select("id,name,status,priority,next_step,due_date").single();
-    if (error) throw new Error(error.message);
-    return NextResponse.json({ ok: true, client: data, message: `Cliente actualizado: ${data.name}` });
+    const ref = input.client_id?.trim() || input.name?.trim();
+    if (!ref) return NextResponse.json({ ok: false, error: "client_id is required" }, { status: 400 });
+
+    const { match, candidates } = await findHubClient(ref);
+    if (!match) {
+      return NextResponse.json({
+        ok: false,
+        error: candidates.length
+          ? `Hay ${candidates.length} clientes que coinciden con "${ref}". Pregúntale a Samy cuál.`
+          : `No encontré ningún cliente que coincida con "${ref}".`,
+        candidates: candidates.map((c) => ({ id: c.id, company_name: c.company_name, email: c.email })),
+      });
+    }
+
+    const client = await updateHubClient(match.id, {
+      contact_name: input.contact,
+      service_interest: input.service,
+      comments: input.next_step ?? input.last_important_message,
+      status: input.status,
+    });
+    return NextResponse.json({ ok: true, client, message: `Cliente actualizado: ${client.company_name}` });
   }
 
   if (operation === "list_events") {
@@ -255,22 +301,6 @@ export async function runGatewayOperation(input: GatewayInput, admin: SupabaseCl
   }
 
   // ---- Amazing Business Hub ----------------------------------------------
-
-  const HUB_OPS = new Set<Operation>([
-    "list_projects",
-    "create_project",
-    "update_project",
-    "add_project_note",
-    "list_hub_clients",
-    "list_invoices",
-  ]);
-
-  if (HUB_OPS.has(operation) && !hubConfigured()) {
-    return NextResponse.json({
-      ok: false,
-      error: `La oficina virtual no está conectada. Faltan estas variables en Vercel: ${missingHubEnvVars().join(", ")}.`,
-    });
-  }
 
   if (operation === "list_projects") {
     const projects = await listHubProjects({ query: input.query, status: input.status });

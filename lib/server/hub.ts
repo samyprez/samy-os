@@ -275,6 +275,106 @@ export async function listHubClients(query?: string | null) {
   return data ?? [];
 }
 
+export type HubClient = {
+  id: string;
+  company_name: string | null;
+  contact_name: string | null;
+  email: string | null;
+  phone: string | null;
+  website: string | null;
+  status: string | null;
+  service_interest: string | null;
+  follow_up_date: string | null;
+  comments: string | null;
+  is_active: boolean | null;
+  created_at: string | null;
+};
+
+/** Same ambiguity-returns-candidates pattern as findHubProject. */
+export async function findHubClient(
+  nameOrId: string,
+): Promise<{ match: HubClient | null; candidates: HubClient[] }> {
+  const value = nameOrId.trim();
+  const admin = getHubAdmin();
+
+  if (/^[0-9a-f-]{36}$/i.test(value)) {
+    const { data, error } = await admin.from("clients").select(CLIENT_FIELDS).eq("id", value).maybeSingle();
+    if (error) throw new Error(error.message);
+    return { match: (data as HubClient | null) ?? null, candidates: [] };
+  }
+
+  const { data, error } = await admin
+    .from("clients")
+    .select(CLIENT_FIELDS)
+    .or(`company_name.ilike.%${value}%,contact_name.ilike.%${value}%`)
+    .limit(10);
+  if (error) throw new Error(error.message);
+
+  const rows = (data ?? []) as HubClient[];
+  if (rows.length === 1) return { match: rows[0], candidates: [] };
+
+  const exact = rows.filter((r) => r.company_name?.toLowerCase() === value.toLowerCase());
+  if (exact.length === 1) return { match: exact[0], candidates: [] };
+
+  return { match: null, candidates: rows };
+}
+
+export async function createHubClient(input: {
+  company_name: string;
+  contact_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  service_interest?: string | null;
+}) {
+  const { data, error } = await getHubAdmin()
+    .from("clients")
+    .insert({
+      company_name: input.company_name.trim(),
+      contact_name: input.contact_name?.trim() || null,
+      email: input.email?.trim() || null,
+      phone: input.phone?.trim() || null,
+      service_interest: input.service_interest?.trim() || null,
+      is_active: true,
+    })
+    .select(CLIENT_FIELDS)
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function updateHubClient(
+  clientId: string,
+  patch: {
+    contact_name?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    service_interest?: string | null;
+    comments?: string | null;
+    follow_up_date?: string | null;
+    status?: string | null;
+  },
+) {
+  const update: Record<string, unknown> = {};
+  if (patch.contact_name !== undefined) update.contact_name = patch.contact_name?.trim() || null;
+  if (patch.email !== undefined) update.email = patch.email?.trim() || null;
+  if (patch.phone !== undefined) update.phone = patch.phone?.trim() || null;
+  if (patch.service_interest !== undefined) update.service_interest = patch.service_interest?.trim() || null;
+  if (patch.comments !== undefined) update.comments = patch.comments?.trim() || null;
+  if (patch.follow_up_date !== undefined) update.follow_up_date = patch.follow_up_date?.trim() || null;
+  if (patch.status !== undefined) update.status = patch.status?.trim() || null;
+
+  if (Object.keys(update).length === 0) throw new Error("No hay nada que actualizar.");
+
+  const { data, error } = await getHubAdmin()
+    .from("clients")
+    .update(update)
+    .eq("id", clientId)
+    .select(CLIENT_FIELDS)
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
 export async function listHubInvoices(options: { status?: string | null; query?: string | null } = {}) {
   let q = getHubAdmin()
     .from("invoices")
