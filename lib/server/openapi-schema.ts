@@ -49,6 +49,8 @@ export function buildSamyOsOpenApi(origin: string) {
                         "create_event",
                         "list_brands",
                         "create_brand",
+                        "list_health",
+                        "create_health",
                         "search_email",
                         "read_email",
                         "list_projects",
@@ -59,7 +61,7 @@ export function buildSamyOsOpenApi(origin: string) {
                         "list_invoices",
                       ],
                       description:
-                        "IMPORTANTE (2026-08-11): tareas/proyectos, clientes y notas viven SOLO en la oficina virtual (app.amazingsolutions.ca, el Hub) — ya no existe una lista de tareas, clientes ni notas separada dentro de Samy OS. list_tasks, create_task y complete_task son alias de las operaciones del Hub: list_tasks lista el tablero (filtra por status o query), create_task crea una tarjeta nueva (requiere title; usa name o related_to para el cliente si aplica), complete_task la marca terminada (requiere task_id, o basta el nombre/title si no tienes el id). list_clients, create_client y update_client son los clientes reales del Hub (requiere name para crear; client_id para actualizar, o basta el nombre). list_notes y create_note son el tablero de notas del Hub (estilo Google Keep, con checklist y notas fijadas): list_notes lista las pendientes, create_note crea una nueva (requiere body; title opcional). list_hub_clients y list_projects/create_project/update_project/add_project_note siguen existiendo como sinónimos exactos de list_clients y list_tasks/create_task/complete_task/add_project_note respectivamente — usa cualquiera de los dos nombres, van al mismo lugar. add_project_note añade una nota al historial de una tarjeta (requiere project y note). list_invoices lista facturas con montos y vencimientos. overview: resumen de tareas, notas y clientes del Hub más los próximos eventos personales. list_events: próximos eventos del calendario personal, o búsqueda si mandas query — el calendario sigue siendo de Samy OS, no del Hub. create_event: agendar un evento personal (requiere title y starts_at). list_brands: listar marcas. create_brand: registrar una marca (requiere name). search_email: buscar correos en el Gmail de Samy con la sintaxis de Gmail en query (por ejemplo 'from:cliente@correo.com', 'is:unread', 'newer_than:7d'); devuelve remitente, asunto, fecha y un extracto, más el id de cada mensaje. read_email: leer un correo completo (requiere message_id, sacado antes de search_email); úsalo cuando el extracto no alcance para responder.",
+                        "IMPORTANTE (2026-08-11): tareas/proyectos, clientes y notas viven SOLO en la oficina virtual (app.amazingsolutions.ca, el Hub) — ya no existe una lista de tareas, clientes ni notas separada dentro de Samy OS. list_tasks, create_task y complete_task son alias de las operaciones del Hub: list_tasks lista el tablero (filtra por status o query), create_task crea una tarjeta nueva (requiere title; usa name o related_to para el cliente si aplica), complete_task la marca terminada (requiere task_id, o basta el nombre/title si no tienes el id). list_clients, create_client y update_client son los clientes reales del Hub (requiere name para crear; client_id para actualizar, o basta el nombre). list_notes y create_note son el tablero de notas del Hub (estilo Google Keep, con checklist y notas fijadas): list_notes lista las pendientes, create_note crea una nueva (requiere body; title opcional). list_hub_clients y list_projects/create_project/update_project/add_project_note siguen existiendo como sinónimos exactos de list_clients y list_tasks/create_task/complete_task/add_project_note respectivamente — usa cualquiera de los dos nombres, van al mismo lugar. add_project_note añade una nota al historial de una tarjeta (requiere project y note). list_invoices lista facturas con montos y vencimientos. overview: resumen de tareas, notas y clientes del Hub más los próximos eventos personales. list_events: próximos eventos del calendario personal, o búsqueda si mandas query — el calendario sigue siendo de Samy OS, no del Hub. create_event: agendar un evento personal (requiere title y starts_at). list_brands: listar marcas. create_brand: registrar una marca (requiere name). list_health: listar registros de salud personal (los más recientes primero, o busca con query en el estado de ánimo o las notas). create_health: guardar un registro de salud (requiere al menos uno de: body con la nota libre, sleep_hours, energy_level de 1 a 10, water_glasses, movement_minutes, mood; entry_date por defecto es hoy). Salud es SOLO de Samy OS, no toca el Hub. search_email: buscar correos en el Gmail de Samy con la sintaxis de Gmail en query (por ejemplo 'from:cliente@correo.com', 'is:unread', 'newer_than:7d'); devuelve remitente, asunto, fecha y un extracto, más el id de cada mensaje. read_email: leer un correo completo (requiere message_id, sacado antes de search_email); úsalo cuando el extracto no alcance para responder.",
                     },
                     title: {
                       type: "string",
@@ -93,7 +95,7 @@ export function buildSamyOsOpenApi(origin: string) {
                     },
                     body: {
                       type: "string",
-                      description: "Contenido de la nota. Obligatorio para create_note.",
+                      description: "Contenido de la nota. Obligatorio para create_note. También sirve como nota libre en create_health.",
                     },
                     related_to: {
                       type: "string",
@@ -176,6 +178,30 @@ export function buildSamyOsOpenApi(origin: string) {
                       type: "string",
                       description: "Notas sueltas sobre la marca.",
                     },
+                    entry_date: {
+                      type: "string",
+                      description: "Fecha del registro de salud en formato YYYY-MM-DD. Si no se menciona, es hoy. Solo para create_health.",
+                    },
+                    sleep_hours: {
+                      type: "number",
+                      description: "Horas dormidas. Solo para create_health.",
+                    },
+                    energy_level: {
+                      type: "integer",
+                      description: "Nivel de energía de 1 a 10. Solo para create_health.",
+                    },
+                    water_glasses: {
+                      type: "integer",
+                      description: "Vasos de agua tomados. Solo para create_health.",
+                    },
+                    movement_minutes: {
+                      type: "integer",
+                      description: "Minutos de ejercicio o movimiento. Solo para create_health.",
+                    },
+                    mood: {
+                      type: "string",
+                      description: "Estado de ánimo en una o dos palabras, por ejemplo 'bien' o 'estresado'. Solo para create_health.",
+                    },
                     limit: {
                       type: "integer",
                       description:
@@ -233,6 +259,9 @@ export function buildSamyOsOpenApi(origin: string) {
                       clients: { type: "array", items: { type: "object" } },
                       events: { type: "array", items: { type: "object" } },
                       brands: { type: "array", items: { type: "object" } },
+                      health: {
+                        description: "Un registro (create_health) o una lista de registros (list_health) de salud personal.",
+                      },
                       project: { type: "object" },
                       projects: { type: "array", items: { type: "object" } },
                       invoices: { type: "array", items: { type: "object" } },

@@ -40,6 +40,8 @@ export type Operation =
   | "create_event"
   | "list_brands"
   | "create_brand"
+  | "list_health"
+  | "create_health"
   | "search_email"
   | "read_email"
   // Amazing Business Hub — app.amazingsolutions.ca. A separate database and a
@@ -88,6 +90,13 @@ export type GatewayInput = {
   progress_percent?: number | null;
   delivery_date?: string | null;
   note?: string | null;
+  // Health
+  entry_date?: string | null;
+  sleep_hours?: number | null;
+  energy_level?: number | null;
+  water_glasses?: number | null;
+  movement_minutes?: number | null;
+  mood?: string | null;
 };
 
 export async function runGatewayOperation(input: GatewayInput, admin: SupabaseClient, userId: string) {
@@ -282,6 +291,38 @@ export async function runGatewayOperation(input: GatewayInput, admin: SupabaseCl
     });
     if (result.duplicate) return NextResponse.json({ ok: true, duplicate: true, brand: result.brand, message: "La marca ya existía y no fue duplicada." });
     return NextResponse.json({ ok: true, brand: result.brand, message: `Marca creada: ${result.brand.name}` });
+  }
+
+  if (operation === "list_health") {
+    let query = admin
+      .from("health_entries")
+      .select("id,entry_date,sleep_hours,energy_level,water_glasses,movement_minutes,mood,notes,created_at")
+      .eq("user_id", userId)
+      .order("entry_date", { ascending: false });
+    if (input.query?.trim()) query = query.or(`mood.ilike.%${input.query.trim()}%,notes.ilike.%${input.query.trim()}%`);
+    const { data, error } = await query.limit(30);
+    if (error) throw new Error(error.message);
+    return NextResponse.json({ ok: true, health: data });
+  }
+
+  if (operation === "create_health") {
+    const entryDate = input.entry_date?.trim() || new Date().toISOString().slice(0, 10);
+    const { data, error } = await admin
+      .from("health_entries")
+      .insert({
+        user_id: userId,
+        entry_date: entryDate,
+        sleep_hours: input.sleep_hours ?? null,
+        energy_level: input.energy_level ?? null,
+        water_glasses: input.water_glasses ?? null,
+        movement_minutes: input.movement_minutes ?? null,
+        mood: input.mood?.trim() || null,
+        notes: input.body?.trim() || input.notes?.trim() || null,
+      })
+      .select("id,entry_date,sleep_hours,energy_level,water_glasses,movement_minutes,mood,notes")
+      .single();
+    if (error) throw new Error(error.message);
+    return NextResponse.json({ ok: true, health: data, message: "Registro de salud guardado." });
   }
 
   if (operation === "search_email" || operation === "read_email") {
