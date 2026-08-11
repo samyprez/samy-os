@@ -388,6 +388,61 @@ export async function listHubInvoices(options: { status?: string | null; query?:
   return data ?? [];
 }
 
+// "Notas" in the Hub UI — a Google-Keep-style board, table name `reminders`.
+// Read from the SQL Editor history (2026-08-11), not the repo: this table
+// doesn't exist in the amazing-business-hub git checkout at all, so whatever
+// deployed it did so outside that repo. RLS is disabled and there is no
+// user_id column — it's a single shared board, not per-user.
+const REMINDER_FIELDS =
+  "id,title,content,checklist,is_urgent,needs_context,is_done,is_pinned,color,position,created_at";
+
+export async function listHubReminders(options: { query?: string | null; includeDone?: boolean } = {}) {
+  let q = getHubAdmin().from("reminders").select(REMINDER_FIELDS);
+  if (!options.includeDone) q = q.eq("is_done", false);
+  const search = options.query?.trim();
+  if (search) q = q.or(`title.ilike.%${search}%,content.ilike.%${search}%`);
+  const { data, error } = await q
+    .order("is_pinned", { ascending: false })
+    .order("position", { ascending: true })
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
+
+export async function createHubReminder(input: {
+  title?: string | null;
+  content: string;
+  is_urgent?: boolean | null;
+  is_pinned?: boolean | null;
+  checklist?: { text: string; done?: boolean }[] | null;
+}) {
+  const { data, error } = await getHubAdmin()
+    .from("reminders")
+    .insert({
+      title: input.title?.trim() || "",
+      content: input.content.trim(),
+      is_urgent: input.is_urgent ?? false,
+      is_pinned: input.is_pinned ?? false,
+      checklist: input.checklist ?? [],
+    })
+    .select(REMINDER_FIELDS)
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function completeHubReminder(reminderId: string) {
+  const { data, error } = await getHubAdmin()
+    .from("reminders")
+    .update({ is_done: true })
+    .eq("id", reminderId)
+    .select(REMINDER_FIELDS)
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
 /** Cheap reachability check for /api/health, mirroring the Supabase one. */
 export async function hubReachable() {
   const { error } = await getHubAdmin().from("projects").select("id").limit(1);

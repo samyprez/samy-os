@@ -2,18 +2,20 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
-import { insertNote, insertEvent, insertBrand } from "@/lib/server/assistant-engine";
+import { insertEvent, insertBrand } from "@/lib/server/assistant-engine";
 import { gmailConfigured, missingGmailEnvVars, readEmail, searchEmails } from "@/lib/server/gmail";
 import {
   appendHubProjectNote,
   createHubClient,
   createHubProject,
+  createHubReminder,
   findHubClient,
   findHubProject,
   hubConfigured,
   listHubClients,
   listHubInvoices,
   listHubProjects,
+  listHubReminders,
   missingHubEnvVars,
   updateHubClient,
   updateHubProject,
@@ -110,6 +112,8 @@ export async function runGatewayOperation(input: GatewayInput, admin: SupabaseCl
     "update_client",
     "list_hub_clients",
     "list_invoices",
+    "list_notes",
+    "create_note",
   ]);
 
   if (HUB_OPS.has(operation) && !hubConfigured()) {
@@ -120,22 +124,20 @@ export async function runGatewayOperation(input: GatewayInput, admin: SupabaseCl
   }
 
   if (operation === "overview") {
-    const [notes, events] = await Promise.all([
-      admin.from("notes").select("id,body,related_to,priority,created_at").eq("user_id", userId).order("created_at", { ascending: false }).limit(10),
-      admin.from("events").select("id,title,starts_at,location,status").eq("user_id", userId).gte("starts_at", new Date().toISOString()).order("starts_at", { ascending: true }).limit(10),
-    ]);
-    const error = notes.error || events.error;
-    if (error) throw new Error(error.message);
+    const events = await admin.from("events").select("id,title,starts_at,location,status").eq("user_id", userId).gte("starts_at", new Date().toISOString()).order("starts_at", { ascending: true }).limit(10);
+    if (events.error) throw new Error(events.error.message);
 
     let tasks: Awaited<ReturnType<typeof listHubProjects>> = [];
     let clients: Awaited<ReturnType<typeof listHubClients>> = [];
+    let notes: Awaited<ReturnType<typeof listHubReminders>> = [];
     if (hubConfigured()) {
-      const [projects, hubClients] = await Promise.all([listHubProjects({}), listHubClients()]);
+      const [projects, hubClients, hubNotes] = await Promise.all([listHubProjects({}), listHubClients(), listHubReminders({})]);
       tasks = projects.filter((p) => p.status !== "completed").slice(0, 20);
       clients = hubClients.slice(0, 50);
+      notes = hubNotes;
     }
 
-    return NextResponse.json({ ok: true, tasks, notes: notes.data, clients, events: events.data });
+    return NextResponse.json({ ok: true, tasks, notes, clients, events: events.data });
   }
 
   if (operation === "list_tasks") {
@@ -176,17 +178,18 @@ export async function runGatewayOperation(input: GatewayInput, admin: SupabaseCl
   }
 
   if (operation === "list_notes") {
-    let query = admin.from("notes").select("id,body,related_to,priority,created_at").eq("user_id", userId).order("created_at", { ascending: false });
-    if (input.query?.trim()) query = query.or(`body.ilike.%${input.query.trim()}%,related_to.ilike.%${input.query.trim()}%`);
-    const { data, error } = await query.limit(50);
-    if (error) throw new Error(error.message);
-    return NextResponse.json({ ok: true, notes: data });
+    const notes = await listHubReminders({ query: input.query });
+    return NextResponse.json({ ok: true, notes });
   }
 
   if (operation === "create_note") {
     const body = input.body?.trim();
     if (!body) return NextResponse.json({ ok: false, error: "body is required" }, { status: 400 });
-    const { note } = await insertNote(admin, userId, { body, related_to: input.related_to, priority: input.priority, category: "Gateway" });
+    const note = await createHubReminder({
+      title: input.title,
+      content: body,
+      is_urgent: input.priority === "Alta",
+    });
     return NextResponse.json({ ok: true, note, message: "Nota guardada." });
   }
 
