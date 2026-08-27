@@ -375,6 +375,7 @@ export async function updateHubClient(
     comments?: string | null;
     follow_up_date?: string | null;
     status?: string | null;
+    website?: string | null;
   },
 ) {
   const update: Record<string, unknown> = {};
@@ -382,6 +383,7 @@ export async function updateHubClient(
   if (patch.email !== undefined) update.email = patch.email?.trim() || null;
   if (patch.phone !== undefined) update.phone = patch.phone?.trim() || null;
   if (patch.service_interest !== undefined) update.service_interest = patch.service_interest?.trim() || null;
+  if (patch.website !== undefined) update.website = patch.website?.trim() || null;
   if (patch.comments !== undefined) update.comments = patch.comments?.trim() || null;
   if (patch.follow_up_date !== undefined) update.follow_up_date = patch.follow_up_date?.trim() || null;
   if (patch.status !== undefined && patch.status !== null) {
@@ -477,4 +479,61 @@ export async function hubReachable() {
   const { error } = await getHubAdmin().from("projects").select("id").limit(1);
   if (error) throw new Error(error.message);
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Invoices — the one place Samy OS does NOT talk to the Hub's database.
+//
+// Everything else here is a direct Postgres call with the service role. An
+// invoice cannot be, because the Stripe payment link is created in the Hub's
+// own `createInvoice` service, not by the database. Writing the rows straight
+// into Postgres would produce a factura the client has no way to pay.
+//
+// So this posts to a server-to-server route on the Hub, authenticated with a
+// shared secret. The Hub owns Stripe; Samy OS only asks.
+// ---------------------------------------------------------------------------
+
+export function missingHubApiEnvVars() {
+  return ["HUB_API_URL", "HUB_API_KEY"].filter((name) => !process.env[name]?.trim());
+}
+
+export type HubInvoiceItem = { description: string; quantity: number; unit_price: number };
+
+export async function createHubInvoice(payload: {
+  client_id?: string | null;
+  client_name?: string | null;
+  notes?: string | null;
+  due_date?: string | null;
+  currency?: string;
+  tax_rate?: number;
+  items: HubInvoiceItem[];
+}) {
+  const missing = missingHubApiEnvVars();
+  if (missing.length) throw new Error(`Faltan variables en Vercel: ${missing.join(", ")}.`);
+
+  const base = process.env.HUB_API_URL!.trim().replace(/\/+$/, "");
+  const res = await fetch(`${base}/api/integrations/invoices`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-samyos-key": process.env.HUB_API_KEY!.trim(),
+    },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+
+  const text = await res.text();
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    // An HTML body here almost always means Clerk intercepted the route and
+    // served a sign-in page — the route was not added to the public list.
+    throw new Error(
+      `El Hub respondió ${res.status} sin JSON. Revisa que /api/integrations/invoices sea pública en el proxy de Clerk.`,
+    );
+  }
+
+  if (!res.ok) throw new Error(String(data.error ?? `El Hub respondió ${res.status}.`));
+  return data;
 }

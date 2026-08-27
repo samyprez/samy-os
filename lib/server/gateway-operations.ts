@@ -21,6 +21,8 @@ import {
   hubConfigured,
   listHubClients,
   listHubInvoices,
+  createHubInvoice,
+  missingHubApiEnvVars,
   listHubProjects,
   listHubReminders,
   missingHubEnvVars,
@@ -62,7 +64,9 @@ export type Operation =
   | "update_project"
   | "add_project_note"
   | "list_hub_clients"
-  | "list_invoices";
+  | "list_invoices"
+  | "create_invoice"
+  | "confirm_invoice";
 
 export type GatewayInput = {
   operation?: Operation;
@@ -98,6 +102,14 @@ export type GatewayInput = {
   progress_percent?: number | null;
   delivery_date?: string | null;
   note?: string | null;
+  // Invoices
+  amount?: number | null;
+  item_description?: string | null;
+  tax_rate?: number | null;
+  currency?: string | null;
+  website?: string | null;
+  email?: string | null;
+  phone?: string | null;
   // Health
   entry_date?: string | null;
   sleep_hours?: number | null;
@@ -129,6 +141,8 @@ export async function runGatewayOperation(input: GatewayInput, admin: SupabaseCl
     "update_client",
     "list_hub_clients",
     "list_invoices",
+    "create_invoice",
+    "confirm_invoice",
     "list_notes",
     "create_note",
   ]);
@@ -242,8 +256,13 @@ export async function runGatewayOperation(input: GatewayInput, admin: SupabaseCl
       });
     }
 
+    // `contact` used to mean three different things across operations. It is
+    // the contact person's NAME here; email/phone/website are their own fields.
     const client = await updateHubClient(match.id, {
       contact_name: input.contact,
+      email: input.email,
+      phone: input.phone,
+      website: input.website,
       service_interest: input.service,
       comments: input.next_step ?? input.last_important_message,
       status: input.status,
@@ -444,6 +463,114 @@ export async function runGatewayOperation(input: GatewayInput, admin: SupabaseCl
   if (operation === "list_hub_clients") {
     const clients = await listHubClients(input.query);
     return NextResponse.json({ ok: true, clients });
+  }
+
+  // -------------------------------------------------------------------------
+  // Invoices, in two steps on purpose.
+  //
+  // The Hub marks every invoice it creates as `sent` and generates a live
+  // Stripe payment link immediately — there is no draft state to fall back on
+  // and Samy OS has no delete_invoice. Dictated numbers get misheard
+  // ("quinientos" / "quince"), so create_invoice only quotes the total back
+  // and confirm_invoice is the only thing that actually bills anyone.
+  // -------------------------------------------------------------------------
+
+  const DEFAULT_TAX_RATE = 13; // HST Ontario. The column stores 13, not 0.13.
+
+  // Amounts are spoken in dollars; `invoice_items.unit_price` is in cents.
+  function toCents(dollars: number) {
+    return Math.round(dollars * 100);
+  }
+  function money(cents: number) {
+    return `$${(cents / 100).toFixed(2)}`;
+  }
+  function inThirtyDays() {
+    const d = new Date();
+    d.setDate(d.getDate() + 30);
+    return d.toISOString().slice(0, 10);
+  }
+
+  if (operation === "create_invoice" || operation === "confirm_invoice") {
+    const ref = input.client_id?.trim() || input.name?.trim();
+    if (!ref) return NextResponse.json({ ok: false, error: "Dime para qué cliente es la factura." }, { status: 400 });
+
+    const amount = typeof input.amount === "number" ? input.amount : null;
+    if (amount === null || !Number.isFinite(amount) || amount <= 0) {
+      return NextResponse.json({ ok: false, error: "Dime el monto de la factura en dólares." }, { status: 400 });
+    }
+
+    const { match, candidates } = await findHubClient(ref);
+    if (!match) {
+      return NextResponse.json({
+        ok: false,
+        error: candidates.length
+          ? `Hay ${candidates.length} clientes que coinciden con "${ref}". Pregúntale a Samy cuál.`
+          : `No encontré ningún cliente que coincida con "${ref}".`,
+        candidates: candidates.map((c) => ({ id: c.id, company_name: c.company_name, email: c.email })),
+      });
+    }
+
+    const description = input.item_description?.trim() || input.service?.trim() || "Servicios profesionales";
+    const taxRate = typeof input.tax_rate === "number" ? input.tax_rate : DEFAULT_TAX_RATE;
+    const dueDate = input.due_date?.trim() || inThirtyDays();
+    const currency = input.currency?.trim() || "cad";
+
+    const subtotal = toCents(amount);
+    const taxAmount = Math.round(subtotal * (taxRate / 100));
+    const total = subtotal + taxAmount;
+
+    if (operation === "create_invoice") {
+      const missing = missingHubApiEnvVars();
+      return NextResponse.json({
+        ok: true,
+        preview: true,
+        client: { id: match.id, company_name: match.company_name },
+        summary: {
+          description,
+          subtotal: money(subtotal),
+          tax_rate: `${taxRate}%`,
+          tax_amount: money(taxAmount),
+          total: money(total),
+          currency: currency.toUpperCase(),
+          due_date: dueDate,
+        },
+        warning: missing.length
+          ? `Ojo: el Hub no está conectado todavía. Faltan en Vercel: ${missing.join(", ")}.`
+          : undefined,
+        message:
+          `Factura para ${match.company_name} — ${description}: ${money(subtotal)} + ` +
+          `${taxRate}% = ${money(total)} ${currency.toUpperCase()}, vence ${dueDate}. ` +
+          `Se envía al confirmar. ¿La creo?`,
+        next_step:
+          "Si Samy confirma, repite la MISMA llamada con operation confirm_invoice y exactamente " +
+          "estos valores: client_id, amount, item_description, tax_rate, due_date.",
+      });
+    }
+
+    const invoice = (await createHubInvoice({
+      client_id: match.id,
+      client_name: match.company_name,
+      notes: input.notes ?? null,
+      due_date: dueDate,
+      currency,
+      tax_rate: taxRate,
+      items: [{ description, quantity: 1, unit_price: subtotal }],
+    })) as Record<string, unknown>;
+
+    // The Hub swallows Stripe failures: it still returns 201 and marks the
+    // invoice `sent`, just without a link. Say so out loud rather than let
+    // Samy find out when the client cannot pay.
+    const link = (invoice.stripe_payment_link_url as string | null) ?? null;
+
+    return NextResponse.json({
+      ok: true,
+      invoice,
+      payment_link: link,
+      message: link
+        ? `Factura creada para ${match.company_name}: ${money(total)} ${currency.toUpperCase()}. Link de pago listo.`
+        : `Factura creada para ${match.company_name}: ${money(total)} ${currency.toUpperCase()}, ` +
+          `pero Stripe no generó el link de pago. Ábrela en el dashboard y usa "Generar Pago".`,
+    });
   }
 
   if (operation === "list_invoices") {
