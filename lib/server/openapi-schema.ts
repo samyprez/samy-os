@@ -150,6 +150,11 @@ export function buildSamyOsOpenApi(origin: string) {
                       type: "string",
                       description: "Moneda de la factura. Por defecto 'cad'.",
                     },
+                    draft: {
+                      type: "boolean",
+                      description:
+                        "Para create_invoice/confirm_invoice. true SOLO si Samy dijo explícitamente que no la envíes / que quede en borrador ('créala pero no la envíes', 'déjala en borrador'). En ese caso NO se genera link de pago de Stripe ni se marca como enviada. Si no dijo nada de eso, deja false (comportamiento normal: se envía con link de pago).",
+                    },
                     service: {
                       type: "string",
                       description: "Servicio que se le presta al cliente, por ejemplo 'sitio web' o 'redes sociales'.",

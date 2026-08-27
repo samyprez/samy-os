@@ -511,6 +511,7 @@ export async function createHubInvoice(payload: {
   currency?: string;
   tax_rate?: number;
   items: HubInvoiceItem[];
+  draft?: boolean;
 }) {
   const missing = missingHubApiEnvVars();
   if (missing.length) throw new Error(`Faltan variables en Vercel: ${missing.join(", ")}.`);

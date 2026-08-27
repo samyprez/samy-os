@@ -107,6 +107,8 @@ export type GatewayInput = {
   item_description?: string | null;
   tax_rate?: number | null;
   currency?: string | null;
+  // true si Samy pidió explícitamente NO enviarla / dejarla en borrador.
+  draft?: boolean | null;
   website?: string | null;
   email?: string | null;
   phone?: string | null;
@@ -519,6 +521,8 @@ export async function runGatewayOperation(input: GatewayInput, admin: SupabaseCl
     const taxAmount = Math.round(subtotal * (taxRate / 100));
     const total = subtotal + taxAmount;
 
+    const draft = input.draft === true;
+
     if (operation === "create_invoice") {
       const missing = missingHubApiEnvVars();
       return NextResponse.json({
@@ -537,13 +541,18 @@ export async function runGatewayOperation(input: GatewayInput, admin: SupabaseCl
         warning: missing.length
           ? `Ojo: el Hub no está conectado todavía. Faltan en Vercel: ${missing.join(", ")}.`
           : undefined,
-        message:
-          `Factura para ${match.company_name} — ${description}: ${money(subtotal)} + ` +
-          `${taxRate}% = ${money(total)} ${currency.toUpperCase()}, vence ${dueDate}. ` +
-          `Se envía al confirmar. ¿La creo?`,
+        message: draft
+          ? `Factura para ${match.company_name} — ${description}: ${money(subtotal)} + ` +
+            `${taxRate}% = ${money(total)} ${currency.toUpperCase()}, vence ${dueDate}. ` +
+            `Queda como BORRADOR, sin link de pago. ¿La creo?`
+          : `Factura para ${match.company_name} — ${description}: ${money(subtotal)} + ` +
+            `${taxRate}% = ${money(total)} ${currency.toUpperCase()}, vence ${dueDate}. ` +
+            `Se envía al confirmar. ¿La creo?`,
         next_step:
           "Si Samy confirma, repite la MISMA llamada con operation confirm_invoice y exactamente " +
-          "estos valores: client_id, amount, item_description, tax_rate, due_date.",
+          "estos valores: client_id, amount, item_description, tax_rate, due_date, draft. " +
+          "Si Samy pidió explícitamente que NO se envíe / que quede en borrador, pasa draft: true " +
+          "en las dos llamadas — si no dijo nada de eso, deja draft en false.",
       });
     }
 
@@ -555,7 +564,16 @@ export async function runGatewayOperation(input: GatewayInput, admin: SupabaseCl
       currency,
       tax_rate: taxRate,
       items: [{ description, quantity: 1, unit_price: subtotal }],
+      draft,
     })) as Record<string, unknown>;
+
+    if (draft) {
+      return NextResponse.json({
+        ok: true,
+        invoice,
+        message: `Factura en borrador para ${match.company_name}: ${money(total)} ${currency.toUpperCase()}. No se envió ni se generó link de pago — la completas desde el dashboard cuando quieras.`,
+      });
+    }
 
     // The Hub swallows Stripe failures: it still returns 201 and marks the
     // invoice `sent`, just without a link. Say so out loud rather than let
