@@ -358,6 +358,10 @@ export async function createHubClient(input: {
       phone: input.phone?.trim() || null,
       service_interest: input.service_interest?.trim() || null,
       is_active: true,
+      // Samuel le dicta clientes reales por voz, no leads por calificar —
+      // que aparezcan directo en "Clientes" y en el widget de recientes del
+      // dashboard, que solo muestra status = 'client'.
+      status: "client",
     })
     .select(CLIENT_FIELDS)
     .single();
