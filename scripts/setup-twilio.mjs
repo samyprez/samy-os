@@ -15,7 +15,8 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import process from "node:process";
 
-const VERCEL = process.platform === "win32" ? "npx.cmd" : "npx";
+const IS_WINDOWS = process.platform === "win32";
+const VERCEL = IS_WINDOWS ? "npx.cmd" : "npx";
 
 function ask(question, { hidden = false } = {}) {
   return new Promise((resolve) => {
@@ -36,7 +37,14 @@ function ask(question, { hidden = false } = {}) {
 
 function run(args, { input } = {}) {
   return new Promise((resolve) => {
-    const child = spawn(VERCEL, ["vercel", ...args], { stdio: ["pipe", "pipe", "pipe"], shell: false });
+    // En Windows hay que pasar por el shell: desde Node 18.20 lanzar un .cmd
+    // directamente falla con EINVAL. Se manda como una sola cadena para no
+    // disparar el aviso de deprecación de argumentos sin escapar. Los
+    // argumentos son constantes (nombres de variables y flags); el secreto
+    // viaja por stdin, nunca por argv ni por el historial del shell.
+    const child = IS_WINDOWS
+      ? spawn([VERCEL, "vercel", ...args].join(" "), { stdio: ["pipe", "pipe", "pipe"], shell: true })
+      : spawn(VERCEL, ["vercel", ...args], { stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
     child.stdout.on("data", (chunk) => (out += chunk));
     child.stderr.on("data", (chunk) => (out += chunk));
