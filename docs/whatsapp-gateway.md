@@ -204,6 +204,15 @@ El SAMYPREZ Channel Manager de ChatGPT corre lunes y jueves; al terminar su
 auditoría, esta es la llamada que tiene que hacer. La URL es pública por HTTPS
 y la protege la clave, así que no necesita acceso a nada local.
 
+Si el Channel Manager es un GPT con Actions en vez de un script, no hace falta
+escribir la llamada a mano: el esquema de Samy OS
+(`/api/chatgpt/openapi`, también en `/openapi.json`) ya incluye la operación
+**`samyOsNotifyWhatsApp`** apuntando a esta ruta. Se importa el esquema, se pone
+la misma clave como Bearer y el GPT la llama solo. Está marcada como *no
+consecuencial* a propósito: el destinatario por defecto es el propio teléfono de
+Samuel y la automatización corre sin nadie delante, así que un diálogo de
+confirmación la dejaría colgada.
+
 ## Registro
 
 Cada envío escribe una línea `[whatsapp-gateway] {...}` en los logs de Vercel

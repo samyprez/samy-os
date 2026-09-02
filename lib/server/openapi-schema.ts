@@ -8,7 +8,7 @@ export function buildSamyOsOpenApi(origin: string) {
       title: "Samy OS",
       version: "1.0.0",
       description:
-        "Sistema operativo personal de Samy. Permite crear y consultar tareas y notas, marcar tareas como completadas, ver un resumen general del día, y leer y enviar correos desde su Gmail. Usa este API cada vez que Samy pida recordar algo, anotar algo, revisar sus pendientes, cerrar una tarea, revisar su correo o mandar un email.",
+        "Sistema operativo personal de Samy. Permite crear y consultar tareas y notas, marcar tareas como completadas, ver un resumen general del día, y leer y enviar correos desde su Gmail. Usa este API cada vez que Samy pida recordar algo, anotar algo, revisar sus pendientes, cerrar una tarea, revisar su correo o mandar un email. También manda avisos cortos por WhatsApp al teléfono de Samy con samyOsNotifyWhatsApp.",
     },
     servers: [{ url: origin }],
     paths: {
@@ -413,6 +413,98 @@ export function buildSamyOsOpenApi(origin: string) {
             "400": { description: "Falta to, subject o body" },
             "401": { description: "Token inválido o ausente" },
             "500": { description: "Error de configuración del servidor o de la API de Gmail" },
+          },
+        },
+      },
+      "/api/notifications/whatsapp": {
+        post: {
+          operationId: "samyOsNotifyWhatsApp",
+          summary: "Mandar un aviso por WhatsApp a Samy",
+          // Under 300 characters: ChatGPT rejects the whole schema past that.
+          description:
+            "Manda un aviso corto por WhatsApp. Úsalo al terminar la auditoría del SAMYPREZ YouTube Manager y para cualquier alerta que Samy deba ver en el teléfono. El informe largo sigue yendo por correo: aquí van pocas líneas.",
+          // Deliberately NOT consequential. The default recipient is Samy's own
+          // phone, and the Channel Manager runs unattended on Monday and
+          // Thursday — a confirmation prompt would stop the automation dead.
+          "x-openai-isConsequential": false,
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    to: {
+                      type: "string",
+                      description:
+                        "Destinatario: un alias configurado ('samy', 'partner', 'all') o un número E.164 (+16474692835). Si se omite, va a Samy.",
+                    },
+                    recipients: {
+                      type: "array",
+                      items: { type: "string" },
+                      description: "Varios destinatarios a la vez, alias o números E.164. Alternativa a 'to'.",
+                    },
+                    message: {
+                      type: "string",
+                      description:
+                        "Texto del aviso, en español y breve (WhatsApp corta a 4096 caracteres). Con 'template' se usa como nota extra.",
+                    },
+                    source: {
+                      type: "string",
+                      description:
+                        "Qué automatización avisa: samyprez-youtube, dominican-content-radar, money-tracker, amazing-solutions o system-alert. Solo minúsculas, números y guiones.",
+                    },
+                    priority: {
+                      type: "string",
+                      enum: ["low", "normal", "high", "urgent"],
+                      description: "'high' y 'urgent' añaden un aviso visible al principio. Por defecto 'normal'.",
+                    },
+                    template: {
+                      type: "string",
+                      description:
+                        "Formato del mensaje: 'samyprez-youtube' para el aviso del canal, 'generic' para el resto. Con plantilla, el texto se arma en el servidor desde 'data'.",
+                    },
+                    data: {
+                      type: "object",
+                      description:
+                        "Campos de la plantilla. Para samyprez-youtube: do_next, prep_next, kpi. Para generic: title, body, items, action.",
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description: "Enviado a todos los destinatarios",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      ok: { type: "boolean" },
+                      source: { type: "string" },
+                      provider: { type: "string" },
+                      sent: { type: "integer", description: "Cuántos avisos salieron." },
+                      failed: { type: "integer" },
+                      results: {
+                        type: "array",
+                        items: { type: "object" },
+                        description: "Uno por destinatario, con el Message SID o el motivo del fallo.",
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            "207": { description: "Llegó a unos destinatarios y a otros no" },
+            "400": { description: "Falta el mensaje, o el destinatario o la plantilla no son válidos" },
+            "401": { description: "Token inválido o ausente" },
+            "429": { description: "Demasiados avisos seguidos desde el mismo source" },
+            "502": { description: "WhatsApp rechazó el envío (revisa 'results' para el motivo)" },
+            "503": { description: "Faltan las credenciales de Twilio en el servidor" },
           },
         },
       },
