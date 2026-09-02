@@ -121,7 +121,10 @@ export async function sendTwilioWhatsApp(input: TwilioSendInput): Promise<Twilio
     headers: {
       // Basic auth. The token never leaves this function and is never logged.
       Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
-      "Content-Type": "application/x-www-form-urlencoded",
+      // El charset es obligatorio, no decorativo: sin él Twilio no interpreta
+      // los bytes como UTF-8 y los acentos llegan al teléfono como `�`.
+      // Los avisos de Samuel van en español, así que esto se nota en todos.
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
     },
     body: form.toString(),
   });
