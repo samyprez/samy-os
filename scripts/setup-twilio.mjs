@@ -13,7 +13,14 @@
 
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import { dirname, resolve } from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
+
+// El CLI de Vercel identifica el proyecto por .vercel/project.json del
+// directorio de trabajo. Se ancla a la raíz del repo para que el script
+// funcione desde cualquier carpeta, no solo desde samy-os.
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const IS_WINDOWS = process.platform === "win32";
 const VERCEL = IS_WINDOWS ? "npx.cmd" : "npx";
@@ -43,8 +50,12 @@ function run(args, { input } = {}) {
     // argumentos son constantes (nombres de variables y flags); el secreto
     // viaja por stdin, nunca por argv ni por el historial del shell.
     const child = IS_WINDOWS
-      ? spawn([VERCEL, "vercel", ...args].join(" "), { stdio: ["pipe", "pipe", "pipe"], shell: true })
-      : spawn(VERCEL, ["vercel", ...args], { stdio: ["pipe", "pipe", "pipe"] });
+      ? spawn([VERCEL, "vercel", ...args].join(" "), {
+          stdio: ["pipe", "pipe", "pipe"],
+          shell: true,
+          cwd: REPO_ROOT,
+        })
+      : spawn(VERCEL, ["vercel", ...args], { stdio: ["pipe", "pipe", "pipe"], cwd: REPO_ROOT });
     let out = "";
     child.stdout.on("data", (chunk) => (out += chunk));
     child.stderr.on("data", (chunk) => (out += chunk));
