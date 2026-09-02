@@ -3,12 +3,12 @@
  * Carga las credenciales de Twilio en las variables de entorno de Vercel.
  *
  * Existe para que el Account SID y el Auth Token viajen de la terminal de
- * Samuel a Vercel sin pasar por el código, por el repo, ni por una conversación.
- * El token se escribe a ciegas y no se imprime en ningún momento.
+ * Samuel a Vercel sin pasar por el código ni por el repo. El token se escribe
+ * a ciegas y no se imprime en ningún momento.
  *
  *   node scripts/setup-twilio.mjs
  *
- * Después de esto hace falta un redeploy para que las funciones las vean.
+ * Después hace falta un redeploy para que las funciones las lean.
  */
 
 import { spawn } from "node:child_process";
@@ -21,7 +21,7 @@ function ask(question, { hidden = false } = {}) {
   return new Promise((resolve) => {
     const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
     if (hidden) {
-      // Silencia el eco: lo tecleado no aparece en pantalla ni queda en el scrollback.
+      // Silencia el eco: lo tecleado no queda en el scrollback.
       rl._writeToOutput = (text) => {
         if (text.includes(question)) rl.output.write(question);
       };
@@ -56,24 +56,53 @@ async function setEnv(name, value) {
 }
 
 const SID_PATTERN = /^AC[0-9a-f]{32}$/i;
+const TOKEN_PATTERN = /^[0-9a-f]{32}$/i;
+
+/**
+ * Acepta las dos credenciales en una sola respuesta.
+ *
+ * Copiarlas del console y pegarlas de golpe es lo que sale natural, y el
+ * resultado es un pegote de 66 caracteres o dos valores separados por espacio.
+ * Los dos formatos son inequívocos —el SID son AC y 32 hex, el token otros 32—
+ * así que rechazarlos por venir juntos solo obliga a repetir el paso.
+ */
+function splitPair(input) {
+  const parts = input.split(/[\s,;:]+/).filter(Boolean);
+  if (parts.length >= 2 && SID_PATTERN.test(parts[0]) && TOKEN_PATTERN.test(parts[1])) {
+    return { sid: parts[0], token: parts[1] };
+  }
+  const glued = input.replace(/[^0-9a-zA-Z]/g, "");
+  if (/^AC[0-9a-f]{64}$/i.test(glued)) {
+    return { sid: glued.slice(0, 34), token: glued.slice(34) };
+  }
+  return null;
+}
 
 async function main() {
   console.log("\nCredenciales de Twilio → Vercel (producción)\n");
-  console.log("Están en console.twilio.com → Account Dashboard → Account Info.\n");
+  console.log("Están en console.twilio.com → Account Dashboard → Account Info.");
+  console.log("Puedes pegar el SID y el token juntos, o el SID solo y te pido el token aparte.\n");
 
-  const sid = await ask("TWILIO_ACCOUNT_SID (empieza por AC): ");
-  if (!SID_PATTERN.test(sid)) {
-    console.error("\nEse no es un Account SID válido: son las letras AC y 32 caracteres hexadecimales.");
-    process.exit(1);
+  const first = await ask("TWILIO_ACCOUNT_SID (empieza por AC): ");
+
+  let sid;
+  let token;
+  const pair = splitPair(first);
+  if (pair) {
+    ({ sid, token } = pair);
+    console.log("  (detecté los dos valores en el mismo pegado)");
+  } else {
+    sid = first;
+    if (!SID_PATTERN.test(sid)) {
+      console.error("\nEse no es un Account SID válido: son las letras AC y 32 caracteres hexadecimales.");
+      console.error(`Lo que llegó tiene ${sid.length} caracteres.`);
+      process.exit(1);
+    }
+    token = await ask("TWILIO_AUTH_TOKEN (no se ve al teclear): ", { hidden: true });
   }
 
-  const token = await ask("TWILIO_AUTH_TOKEN (no se ve al teclear): ", { hidden: true });
-  if (token.length < 30) {
-    console.error("\nEl Auth Token parece incompleto. Cópialo entero desde el console.");
-    process.exit(1);
-  }
-  if (token === sid) {
-    console.error("\nPegaste el SID otra vez. El Auth Token es el otro valor, el que está oculto.");
+  if (!TOKEN_PATTERN.test(token)) {
+    console.error("\nEl Auth Token debe ser 32 caracteres hexadecimales. Cópialo entero desde el console.");
     process.exit(1);
   }
 
