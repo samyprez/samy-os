@@ -29,6 +29,7 @@ Todo pasa por un solo cerebro: `lib/server/gateway-operations.ts`
 | ChatGPT | `POST /api/chatgpt` | Bearer `ASSISTANT_API_KEY` |
 | Dashboard y voz en el navegador | `POST /api/dashboard` | Token de sesión Supabase del usuario |
 | Enviar correo (aparte, a propósito) | `POST /api/chatgpt/send-email` y `/api/dashboard/send-email` | igual que arriba |
+| Avisos por WhatsApp (cualquier automatización) | `POST /api/notifications/whatsapp` | Bearer `NOTIFICATION_API_KEY` |
 
 Enviar correo vive en su propia ruta porque ChatGPT marca la confirmación
 **por operación**, no por campo: el gateway principal es
@@ -48,7 +49,8 @@ vez) y enviar correo es `true` (siempre confirma).
 | **Correo** (`search_email`, `read_email`, enviar) | **Gmail API** | `lib/server/gmail.ts` |
 | **Salud** (`list_health`, `create_health`) | Supabase de Samy OS, tabla `health_entries` | gateway |
 | **Marcas** (`list_brands`, `create_brand`) | Supabase de Samy OS | gateway |
-| **WhatsApp** (empezado, no terminado) | WhatsApp Business Cloud API | `lib/server/whatsapp.ts` |
+| **WhatsApp entrante / conversaciones** (empezado, no terminado) | WhatsApp Business Cloud API | `lib/server/whatsapp.ts` |
+| **Avisos salientes por WhatsApp** (listo) | Twilio WhatsApp | `lib/server/notifications.ts` + `lib/server/twilio-whatsapp.ts` — ver `docs/whatsapp-gateway.md` |
 
 **Las tablas propias de Samy OS para tareas, clientes, notas y eventos quedaron
 retiradas.** Los nombres de operación (`create_task`, etc.) se conservaron
