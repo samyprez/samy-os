@@ -299,6 +299,8 @@ function rememberSend(key: string, now: number) {
 type LogEntry = {
   event: string;
   source: string;
+  template?: string;
+  data_keys?: string;
   provider?: ProviderName;
   to?: string;
   status?: string;
@@ -371,6 +373,29 @@ function validatePriority(value: unknown): Priority {
   return priority as Priority;
 }
 
+/**
+ * `data` llega a veces como texto en vez de objeto.
+ *
+ * Las Actions de ChatGPT serializan los objetos anidados como cadena JSON según
+ * el caso. Tratarlo entonces como "no es un objeto, luego está vacío" produce el
+ * peor fallo posible: un aviso que sale con la cabecera y el pie y nada en medio,
+ * con la llamada devolviendo 200 y todo el mundo creyendo que funcionó.
+ */
+function coerceTemplateData(raw: unknown): Record<string, unknown> {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw as Record<string, unknown>;
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // No era JSON. Se ignora: el mensaje saldrá con lo que haya en `message`.
+    }
+  }
+  return {};
+}
+
 /** Either a written `message`, or `template` + `data` rendered on the server. */
 export function buildMessage(input: NotificationRequest, priority: Priority): string {
   if (input.message != null && typeof input.message !== "string") {
@@ -380,7 +405,7 @@ export function buildMessage(input: NotificationRequest, priority: Priority): st
 
   if (input.template != null && String(input.template).trim()) {
     const name = String(input.template).trim();
-    const data = (input.data && typeof input.data === "object" ? input.data : {}) as Record<string, unknown>;
+    const data = coerceTemplateData(input.data);
     const rendered = renderTemplate(name, body ? { body, ...data } : data);
     if (rendered == null) {
       throw new NotificationError(
@@ -424,6 +449,17 @@ export async function sendWhatsAppNotification(input: NotificationRequest): Prom
           ]),
         ) as Record<string, string>)
       : undefined;
+
+  // Los nombres de los campos, no su contenido: basta para saber si el que
+  // llama mandó la plantilla vacía, y el texto del aviso sigue sin tocar el log.
+  if (input.template != null) {
+    log({
+      event: "template_received",
+      source,
+      template: String(input.template),
+      data_keys: Object.keys(coerceTemplateData(input.data)).join(",") || "(ninguno)",
+    });
+  }
 
   const now = Date.now();
   assertWithinRateLimit(source, now);
