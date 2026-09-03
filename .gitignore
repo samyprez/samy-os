@@ -43,3 +43,6 @@ next-env.d.ts
 
 .vercel
 .env*
+
+# Carpeta de descartes local, no pertenece al repo
+_to_delete/
