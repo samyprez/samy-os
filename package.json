@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test:whatsapp": "node scripts/test-whatsapp-gateway.mjs",
-    "setup:twilio": "node scripts/setup-twilio.mjs"
+    "setup:twilio": "node scripts/setup-twilio.mjs",
+    "test:mcp": "node scripts/test-mcp.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.7.0",
