@@ -51,6 +51,7 @@ vez) y enviar correo es `true` (siempre confirma).
 | **Marcas** (`list_brands`, `create_brand`) | Supabase de Samy OS | gateway |
 | **WhatsApp entrante / conversaciones** (empezado, no terminado) | WhatsApp Business Cloud API | `lib/server/whatsapp.ts` |
 | **Avisos salientes por WhatsApp** (listo) | Twilio WhatsApp | `lib/server/notifications.ts` + `lib/server/twilio-whatsapp.ts` — ver `docs/whatsapp-gateway.md` |
+| **Conector MCP para ChatGPT** (listo) | OAuth propio, sin estado | `app/api/mcp/` + `lib/server/mcp-oauth.ts`. Es lo que usan las tareas programadas: corren en chat normal, donde no hay Actions de GPT pero sí conectores. |
 
 **Las tablas propias de Samy OS para tareas, clientes, notas y eventos quedaron
 retiradas.** Los nombres de operación (`create_task`, etc.) se conservaron

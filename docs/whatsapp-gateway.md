@@ -224,3 +224,62 @@ autorización, ni el texto del mensaje.
 
 El YouTube Manager sigue mandando sus informes a samyprez@gmail.com y
 anacapotillo@gmail.com. Nada de eso se tocó: esto es solo WhatsApp.
+
+## Conector MCP (cómo lo llaman las rutinas de ChatGPT)
+
+Las tareas programadas de Samuel corren en un **chat normal** de ChatGPT, no
+dentro de un GPT. Eso importa más de lo que parece:
+
+- un chat normal tiene los conectores (vidIQ, Gmail, Calendar) pero **no** tiene
+  Actions de GPT;
+- un GPT personalizado tiene Actions pero **no** puede usar vidIQ, que es de
+  donde el Channel Manager saca vistas, retención y score de títulos.
+
+Mover la rutina al GPT habría cambiado el aviso de WhatsApp por los datos del
+canal. Por eso el gateway se expone además como **servidor MCP**, que sí se ve
+desde el chat normal: las cinco rutinas pueden usarlo sin tocar ninguna.
+
+```
+POST https://samy-os-seven.vercel.app/api/mcp
+```
+
+Herramientas: `enviar_whatsapp` y `estado_whatsapp`.
+
+### Autenticación
+
+ChatGPT solo ofrece OAuth, "sin autenticación" o mixta en los complementos
+personalizados. Sin autenticación dejaría abierto un endpoint que manda
+mensajes y gasta saldo de Twilio, así que hay un flujo OAuth mínimo que el
+cliente descubre solo:
+
+| Ruta | Qué hace |
+|---|---|
+| `/.well-known/oauth-protected-resource` | Dice qué servidor autoriza el recurso. |
+| `/.well-known/oauth-authorization-server` | Endpoints y PKCE S256 obligatorio. |
+| `/api/mcp/oauth/register` | Registro dinámico. El `client_id` **es** el registro firmado. |
+| `/api/mcp/oauth/authorize` | Pantalla de consentimiento: pide la clave del gateway. |
+| `/api/mcp/oauth/token` | Canjea el código verificando PKCE. |
+
+**Nada se almacena.** Clientes, códigos y tokens van firmados con HMAC y llevan
+su caducidad dentro, así que un solo usuario no arrastra tres tablas nuevas ni
+estado que limpiar. La firma sale de `MCP_OAUTH_SECRET`, o de
+`NOTIFICATION_API_KEY` si aquella no existe.
+
+### Pruebas
+
+```bash
+npm run test:mcp -- --url https://samy-os-seven.vercel.app --key <clave>
+```
+
+Recorre lo mismo que recorre ChatGPT al añadir el complemento y comprueba 16
+cosas: descubrimiento, 401 sin token, el `WWW-Authenticate` que dice dónde
+autenticarse, registro dinámico, clave incorrecta, PKCE manipulado, canje del
+código y el protocolo entero. Con `--send` entrega un WhatsApp real (17).
+
+### Por qué `data` se parsea aunque llegue como texto
+
+ChatGPT serializa a veces los objetos anidados como cadena JSON. Descartarlos
+producía el peor fallo posible: un aviso con la cabecera y el pie y nada en
+medio, devolviendo 200. Se vio en el primer envío real desde el GPT. Por eso
+`coerceTemplateData` acepta las dos formas, y cada llamada con plantilla deja
+en el log qué campos trajo — los nombres, nunca el contenido.
