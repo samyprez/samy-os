@@ -466,10 +466,52 @@ export function buildSamyOsOpenApi(origin: string) {
                       description:
                         "Formato del mensaje: 'samyprez-youtube' para el aviso del canal, 'generic' para el resto. Con plantilla, el texto se arma en el servidor desde 'data'.",
                     },
+                    // Cada campo va declarado uno a uno a propósito. ChatGPT
+                    // descarta las claves que el esquema no nombra, así que un
+                    // `type: "object"` suelto llega vacío al servidor y el aviso
+                    // sale con la cabecera y el pie y nada en medio.
                     data: {
                       type: "object",
-                      description:
-                        "Campos de la plantilla. Para samyprez-youtube: do_next, prep_next, kpi. Para generic: title, body, items, action.",
+                      description: "Campos de la plantilla. Rellena solo los que apliquen; los vacíos se omiten.",
+                      properties: {
+                        do_next: {
+                          type: "string",
+                          description: "samyprez-youtube: lo que Samy tiene que grabar ahora. Título exacto entre comillas.",
+                        },
+                        prep_next: {
+                          type: "string",
+                          description: "samyprez-youtube: el siguiente vídeo a preparar.",
+                        },
+                        kpi: {
+                          type: "string",
+                          description: "samyprez-youtube: la métrica a vigilar, en una frase.",
+                        },
+                        note: {
+                          type: "string",
+                          description: "Una línea extra de contexto. Opcional.",
+                        },
+                        title: {
+                          type: "string",
+                          description: "generic: encabezado del aviso. Sale en mayúsculas.",
+                        },
+                        body: {
+                          type: "string",
+                          description: "generic: resumen en una o dos frases.",
+                        },
+                        items: {
+                          type: "array",
+                          items: { type: "string" },
+                          description: "generic: puntos sueltos, salen como lista con viñetas.",
+                        },
+                        action: {
+                          type: "string",
+                          description: "generic: lo que Samy debe hacer.",
+                        },
+                        footer: {
+                          type: "string",
+                          description: "Cierre del mensaje. Opcional.",
+                        },
+                      },
                     },
                   },
                 },
