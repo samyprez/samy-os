@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { DATABASE_UNREACHABLE, isDatabaseUnreachable } from "@/lib/server/gateway-errors";
 import { assertSamyOsCaller, getSamyOsAdmin } from "@/lib/server/samy-os-admin";
 import { runGatewayOperation, type GatewayInput } from "@/lib/server/gateway-operations";
 
@@ -27,6 +28,9 @@ export async function POST(request: Request) {
     return await runGatewayOperation(input, admin, userId);
   } catch (error) {
     console.error("Dashboard gateway error", error);
+    if (isDatabaseUnreachable(error)) {
+      return NextResponse.json({ ok: false, error: DATABASE_UNREACHABLE }, { status: 503 });
+    }
     const message = error instanceof Error ? error.message : "Unknown server error";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
