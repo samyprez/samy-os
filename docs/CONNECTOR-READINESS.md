@@ -19,8 +19,8 @@ Seventeen behavioral tests cover read permissions, signing-key separation, no wr
 | Hub via Samy OS API | Yes | Yes | Hub project identified by deployed health | Authenticated list_clients and list_invoices returned HTTP 200 and ok=true | Not performed | API tested; new MCP read tool pending consent/discovery | Do not infer that the ordinary-chat read tool is installed from backend success |
 | Gmail via Samy OS API | Yes | Yes | Owner mailbox confirmed by deployed health | Authenticated search_email returned HTTP 200 and ok=true | Not performed | API tested; new MCP read tool pending consent/discovery | Sending and attachment workflows remain untested |
 | Calendar via Samy OS | Yes | Yes | Owner identity not independently checked | Deployed health executed list_events successfully | Not performed | New MCP read tool pending consent/discovery | No calendar event created or deleted |
-| Personal Supabase project | Configured | Not confirmed | Project identified | Deployment queries fail; management API explicitly denies access | Not performed | Blocked | Requires access to the account/organization owning the existing project; do not replace it with the Hub database |
-| WordPress custom connector | Yes | Not confirmed for site | Alias unresolved | Both links reject the supplied domain alias | Not performed | Tools visible, site operation blocked | Backend alias map not exposed by these tools |
+| Personal Supabase project | Yes | Deployed credentials verified | Original project restored | Production health: six table probes, service-role query and owner lookup passed | Not performed | API health verified | Management connector uses a different authorization and previously denied this project |
+| WordPress custom connector | Yes | Yes | torontodominicano alias | Status and post reads passed | Draft 75536 created, updated and read back | Tested | Publishing/media not tested; alias-discovery PR remains undeployed |
 | Hostinger hosting x2 | Not exposed here | Not tested | Not identified | Not tested | Not performed | Blocked | Existing mail authorization is insufficient |
 | Metricool | Yes | Yes | TorontoDominicano brand identified | Brand listing passed | Not performed | Brand listing tested | Network-specific publishing and private analytics need verification |
 | Google Ads | Discoverable compatible connector | Not authorized here | Not identified | Not tested | Not performed | Blocked | No campaign or budget change made |
@@ -31,7 +31,7 @@ The API tests reported only HTTP status, ok flags and record counts. No customer
 
 PR #6 was already merged and deployed before the owner clarified that future production changes must wait until the full project is finished. This increment remains on `feat/connector-readiness` and a Vercel preview. Do not merge it into production based only on passing CI.
 
-The system is not complete: ordinary-chat discovery/reconsent for the new MCP tool, personal database access, WordPress aliases, two hosting accounts, inbound messages, complete approvals/idempotency and marketing integrations still require work. A passing build is not acceptance of these missing capabilities.
+The system is not complete: ordinary-chat discovery/reconsent for the new MCP tool, management access to the restored personal database, two hosting accounts, inbound messages, complete approvals/idempotency and marketing integrations still require work. A passing build is not acceptance of these missing capabilities.
 
 ## Security hardening in this preview
 
@@ -107,3 +107,38 @@ newly created approvals. Do not prepare another approval after an uncertain send
 until the owner checks Sent mail. A crash after claiming requires reconciliation.
 A malicious authorized caller can still assert owner approval; UI/ChatGPT must
 capture explicit approval after showing the complete draft.
+
+## Original production database recovered — 2026-11-08
+
+The owner signed into the Supabase organization Samy OS. Through that owner
+session, Resume project was confirmed for samy-os-PRODUCCION
+(`ljiviqzuzhtdrftphsih`). Supabase displayed “Restoration complete!” and “back
+online”. Production `/api/health` subsequently returned `ok: true`,
+`tablesReady: true`, `serviceRoleWorks: true`, `ownerResolved: true` and
+`chatgptGateway: true`. Gmail identified the expected mailbox; Calendar and
+Hub checks returned `works: true`. These are bounded read probes, not a full
+data-integrity audit or proof of all workflows. OpenAI's flag is configuration
+only. No schema, environment-variable, billing-plan or deployment change occurred.
+The management plugin's prior permission denial is separate from application
+credentials and was not repaired by resuming the project.
+
+The ordinary-chat `estado_whatsapp` tool was called again successfully after
+recovery. It still only establishes configuration, not delivery. This chat's
+available Samy OS tools remain the two notification tools, with no
+`consultar_samy_os`. The existing private App-backed plugin was identified as
+`plugin_asdk_app_6a99a293f7f8819183d408833b774ed5`; no replacement was created.
+Its package only references the existing App, so changing package text cannot
+renew OAuth consent or refresh the App's tool list. Browser access to ChatGPT
+settings was blocked by the browser host policy. The owner must renew read
+consent on the existing connection through ChatGPT's supported UI. Do not mint
+an access token out of band or expand existing notification tokens silently.
+
+## Bounded MCP list responses — preview only
+
+Hub client/project/task/note/invoice lists and Calendar events now honor the
+requested `limit` (1–25, default 25). Responses include `result_limit` and
+`truncated` when the bridge omitted fetched rows. This flag describes bridge
+trimming only: providers may already cap their result sets, so `false` does not
+prove an exhaustive account inventory. Pagination remains future work. A
+behavioral test covers every list operation, defaults and empty results; no
+customer data is written. This change is not deployed to production.

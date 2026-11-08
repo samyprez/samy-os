@@ -37,12 +37,31 @@ export async function runReadOperation(args: Record<string, unknown>, deps = pro
   if (args.limit !== undefined && (!Number.isInteger(args.limit) || Number(args.limit) < 1 || Number(args.limit) > 25)) throw new Error("Invalid limit");
   const query = args.query as string | undefined;
   const status = args.status as string | undefined;
+  const limit = Number(args.limit ?? 25);
+  function bounded<T>(rows: T[]) {
+    return { rows: rows.slice(0, limit), result_limit: limit, truncated: rows.length > limit };
+  }
   switch (operation) {
-    case "list_tasks": case "list_projects": return { ok: true, source: "amazing_business_hub", projects: await deps.listHubProjects({ query, status }) };
-    case "list_clients": return { ok: true, source: "amazing_business_hub", clients: await deps.listHubClients(query) };
-    case "list_notes": return { ok: true, source: "amazing_business_hub", notes: await deps.listHubReminders({ query }) };
-    case "list_invoices": return { ok: true, source: "amazing_business_hub", invoices: await deps.listHubInvoices({ query, status }) };
-    case "list_events": return { ok: true, source: "google_calendar", events: await deps.listCalendarEvents({ query }) };
+    case "list_tasks": case "list_projects": {
+      const { rows, ...page } = bounded(await deps.listHubProjects({ query, status }));
+      return { ok: true, source: "amazing_business_hub", projects: rows, ...page };
+    }
+    case "list_clients": {
+      const { rows, ...page } = bounded(await deps.listHubClients(query));
+      return { ok: true, source: "amazing_business_hub", clients: rows, ...page };
+    }
+    case "list_notes": {
+      const { rows, ...page } = bounded(await deps.listHubReminders({ query }));
+      return { ok: true, source: "amazing_business_hub", notes: rows, ...page };
+    }
+    case "list_invoices": {
+      const { rows, ...page } = bounded(await deps.listHubInvoices({ query, status }));
+      return { ok: true, source: "amazing_business_hub", invoices: rows, ...page };
+    }
+    case "list_events": {
+      const { rows, ...page } = bounded(await deps.listCalendarEvents({ query }));
+      return { ok: true, source: "google_calendar", events: rows, ...page };
+    }
     case "search_email": return { ok: true, source: "gmail", emails: await deps.searchEmails(query || "", Number(args.limit ?? 10)) };
     case "read_email": {
       if (typeof args.message_id !== "string" || !args.message_id.trim()) throw new Error("message_id is required");

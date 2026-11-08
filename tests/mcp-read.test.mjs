@@ -155,3 +155,20 @@ test('wrong Gmail account cannot be reported ready', async () => {
   assert.equal(report.overall_state,'attention_required');
  } finally { if(previous===undefined) delete process.env.SAMY_OS_OWNER_EMAIL; else process.env.SAMY_OS_OWNER_EMAIL=previous; }
 });
+
+ test('business and calendar lists honor the requested bound without claiming complete results', async () => {
+  const original = Array.from({ length: 30 }, (_, id) => ({ id }));
+  const provide = async () => original;
+  const deps = { listHubProjects: provide, listHubClients: provide, listHubReminders: provide, listHubInvoices: provide, listCalendarEvents: provide };
+  for (const [operation, key] of [['list_tasks','projects'],['list_projects','projects'],['list_clients','clients'],['list_notes','notes'],['list_invoices','invoices'],['list_events','events']]) {
+    const result = await read.runReadOperation({ operation, limit: 2 }, deps);
+    assert.deepEqual(result[key], [{id:0},{id:1}]);
+    assert.equal(result.result_limit, 2);
+    assert.equal(result.truncated, true);
+    const defaultResult = await read.runReadOperation({ operation }, deps);
+    assert.equal(defaultResult[key].length,25);
+  }
+  assert.equal(original.length,30);
+  const empty = await read.runReadOperation({ operation:'list_clients', limit:2 }, {listHubClients:async()=>[]});
+  assert.equal(empty.truncated,false);
+});
