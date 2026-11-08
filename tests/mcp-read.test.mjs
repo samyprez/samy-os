@@ -172,3 +172,30 @@ test('wrong Gmail account cannot be reported ready', async () => {
   const empty = await read.runReadOperation({ operation:'list_clients', limit:2 }, {listHubClients:async()=>[]});
   assert.equal(empty.truncated,false);
 });
+
+test('MCP catalog stays discoverable while execution enforces each token grant', async () => {
+  let reads = 0;
+  const route = load('app/api/mcp/route.ts', {
+    '@/lib/server/mcp-read': { READ_TOOL: read.READ_TOOL, runReadOperation: async () => { reads++; return { ok:true }; } },
+    '@/lib/server/mcp-oauth': { accessTokenValid: t => ['legacy','read'].includes(t), accessTokenCanRead: t => t === 'read' },
+    '@/lib/server/notifications': { PRIORITIES: ['normal'], providerStatus: () => ({ configured:true,provider:'twilio' }), recipientBook: () => ({samy:'test'}) },
+    '@/lib/server/notification-formatters': { templateNames: () => ['generic'] }
+  });
+  const rpc = async (token,method,params={}) => route.POST(new Request('https://example.com/api/mcp', {
+    method:'POST', headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},
+    body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})
+  }));
+  const legacy = await (await rpc('legacy','tools/list')).json();
+  const authorized = await (await rpc('read','tools/list')).json();
+  assert.deepEqual(legacy.result.tools,authorized.result.tools);
+  assert.deepEqual(legacy.result.tools.map(t=>t.name),['enviar_whatsapp','estado_whatsapp','consultar_samy_os']);
+  assert.equal((await rpc('invalid','tools/list')).status,401);
+  const args = {name:'consultar_samy_os',arguments:{operation:'list_clients'}};
+  const denied = await (await rpc('legacy','tools/call',args)).json();
+  assert.equal(denied.result.isError,true);
+  assert.match(denied.result.content[0].text,/permission_missing/);
+  assert.equal(reads,0);
+  assert.equal((await (await rpc('read','tools/call',args)).json()).result.isError,false);
+  assert.equal(reads,1);
+  assert.equal((await (await rpc('legacy','tools/call',{name:'estado_whatsapp'})).json()).result.isError,false);
+});

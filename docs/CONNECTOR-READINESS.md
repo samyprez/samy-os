@@ -142,3 +142,27 @@ trimming only: providers may already cap their result sets, so `false` does not
 prove an exhaustive account inventory. Pagination remains future work. A
 behavioral test covers every list operation, defaults and empty results; no
 customer data is written. This change is not deployed to production.
+
+## Discovery repair after owner reconnect — 2026-11-08
+
+The owner reconnected and refreshed the existing App, then tested in a fresh
+ChatGPT conversation. The supplied screenshot still shows only enviar_whatsapp
+and estado_whatsapp. This rules out this conversation alone retaining the old
+catalog; it does not reveal which grant ChatGPT used for metadata discovery.
+
+The server previously omitted consultar_samy_os from tools/list for legacy
+notification tokens. Discovery now advertises the same three schemas for every
+valid token. Execution still enforces accessTokenCanRead BEFORE any provider
+call; invalid tokens cannot list tools and legacy tokens cannot read data.
+This eliminates grant-dependent catalog omission without granting read access.
+It does not prove ChatGPT has accepted or refreshed the new catalog.
+
+Validation: 29 unit/route tests passed, changed-file ESLint passed, production
+build passed, and local HTTP OAuth tests passed with notification-only and
+read-authorized grants. An initial HTTP attempt failed because the separately
+started local server was no longer running; rerunning the server and tests in
+the same process lifecycle passed. No real customer messages were sent.
+
+This repair remains on PR #7, NOT production. Acceptance still requires the
+new code deployed, a refreshed App catalog, and a real read invocation from
+ChatGPT. Do not ask the owner to repeatedly reconnect the unchanged deployment.

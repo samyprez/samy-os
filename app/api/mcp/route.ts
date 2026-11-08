@@ -168,7 +168,11 @@ export async function POST(request: Request) {
       return result(id, {});
 
     case "tools/list":
-      return result(id, { tools: accessTokenCanRead(token) ? [...TOOLS, READ_TOOL] : TOOLS });
+      // Keep discovery stable across authorized accounts/tokens. Clients may
+      // cache this catalog separately from the user's refreshed OAuth grant.
+      // Advertising a schema grants no access: callTool still checks read consent
+      // before invoking any mail, calendar or Hub provider.
+      return result(id, { tools: [...TOOLS, READ_TOOL] });
 
     case "tools/call": {
       if (params.arguments !== undefined && (!params.arguments || typeof params.arguments !== "object" || Array.isArray(params.arguments))) return failure(id, -32602, "Invalid arguments");
