@@ -45,9 +45,29 @@ injected reply metadata. It no longer adds `Re:` after draft review. The OpenAPI
 contract now describes preservation of the reviewed subject. Unit tests use
 mocked Gmail responses; no real email was sent.
 
-**This does not complete the approval workflow.** The existing dashboard
-confirmation still truncates the message and omits the sender/CC/BCC/attachment
-summary. API sends do not yet require a durable, single-use approval bound to a
-complete final draft. Production release remains blocked until this is fixed
-and tested. OAuth code replay prevention, revocation, durable action idempotency,
-and rate limiting also remain open. Do not report the full handoff completed.
+## Dashboard draft review update
+
+The dashboard now fetches the authenticated Gmail identity before presenting an
+immutable snapshot with sender, To, CC, BCC (none), full subject/body and
+attachments (none). Editing requires another review. The explicit approval
+button sends that snapshot, and an in-flight guard prevents double clicks.
+The dashboard API requires a confirmation flag and expected sender; Gmail
+rechecks that sender before sending. Tests cover identity changes, missing
+confirmation, unauthorized access and preview-without-send. No real email sent.
+
+This is UI confirmation, not a durable server approval record. A trusted caller
+can still supply the confirmation flag. Single-use draft-bound approval,
+idempotency across retries/instances, and the separate ChatGPT send endpoint
+remain incomplete. BCC and attachments are not supported by this composer.
+Browser interaction testing awaits a usable authenticated dashboard; compilation
+and mocked route/provider tests do not replace that check. Do not deploy yet.
+
+OAuth code replay prevention, revocation and rate limiting also remain open.
+
+## WordPress blocker corrected
+
+The custom connector was reachable. The valid alias is `torontodominicano`
+(without `.com`). Both connections passed real status reads. Reading posts,
+creating/updating draft 75536 and reading it back succeeded. It remains a draft.
+Alias discovery/domain support is prepared in the original connector repository
+PR #1, not deployed. See that repository README for the exact test record.

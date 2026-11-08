@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { assertSamyOsCaller } from "@/lib/server/samy-os-admin";
-import { gmailConfigured, missingGmailEnvVars, sendEmail } from "@/lib/server/gmail";
+import { gmailConfigured, missingGmailEnvVars, sendEmail, getGmailAddress } from "@/lib/server/gmail";
 
 export const runtime = "nodejs";
 
@@ -9,12 +9,26 @@ export const runtime = "nodejs";
 // on screen — never fired automatically by voice.
 
 type Input = {
+  expected_from?: string;
+  approved?: boolean;
   to?: string;
   subject?: string;
   body?: string;
   cc?: string | null;
   reply_to_message_id?: string | null;
 };
+
+export async function GET(request: Request) {
+  try {
+    await assertSamyOsCaller(request);
+    const from = await getGmailAddress();
+    if (!from) return NextResponse.json({ ok: false, error: "No se pudo verificar el remitente." }, { status: 503 });
+    return NextResponse.json({ ok: true, from }, { headers: { "Cache-Control": "no-store" } });
+  } catch (error) {
+    const unauthorized = error instanceof Error && error.message === "UNAUTHORIZED";
+    return NextResponse.json({ ok: false, error: unauthorized ? "Unauthorized" : "No se pudo verificar la cuenta de Gmail." }, { status: unauthorized ? 401 : 503 });
+  }
+}
 
 export async function POST(request: Request) {
   try {
@@ -35,6 +49,12 @@ export async function POST(request: Request) {
     }
 
     const input = (await request.json()) as Input;
+    if (!input || typeof input !== "object" || Array.isArray(input) || input.approved !== true || typeof input.expected_from !== "string" || !input.expected_from.trim()) {
+      return NextResponse.json({ ok: false, error: "Revisa el borrador completo y confirma el envío." }, { status: 400 });
+    }
+    if (typeof input.to !== "string" || typeof input.subject !== "string" || typeof input.body !== "string" || (input.cc != null && typeof input.cc !== "string") || (input.reply_to_message_id != null && typeof input.reply_to_message_id !== "string")) {
+      return NextResponse.json({ ok: false, error: "Invalid draft" }, { status: 400 });
+    }
     const to = input.to?.trim();
     const subject = input.subject?.trim();
     const body = input.body;
@@ -44,6 +64,7 @@ export async function POST(request: Request) {
     if (!body?.trim()) return NextResponse.json({ ok: false, error: "body is required" }, { status: 400 });
 
     const email = await sendEmail({
+      expected_from: input.expected_from.trim(),
       to,
       subject,
       body,
@@ -58,3 +79,4 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
+

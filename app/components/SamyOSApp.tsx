@@ -1,7 +1,7 @@
 "use client";
 
 import { CalendarDays, CheckCircle2, ClipboardList, HeartPulse, LayoutDashboard, LogOut, Mail, Menu, NotebookPen, Plus, Search, Send, Sparkles, Store, Trash2, Users, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 
 type Section = "Dashboard" | "Clientes" | "Pendientes" | "Calendario" | "Marcas" | "Notas" | "Salud" | "Email";
@@ -120,11 +120,11 @@ export default function SamyOSApp(){
     return data;
   }
 
-  async function sendEmailConfirmed(input:{to:string;subject:string;body:string;cc?:string|null;reply_to_message_id?:string|null}){
+  async function sendEmailConfirmed(input:Record<string,unknown>){
     const {data:sessionData}=await supabase.auth.getSession();
     const accessToken=sessionData.session?.access_token;
     if(!accessToken)throw new Error("Tu sesión expiró. Vuelve a iniciar sesión.");
-    const response=await fetch("/api/dashboard/send-email",{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${accessToken}`},body:JSON.stringify(input)});
+    const response=await fetch("/api/dashboard/send-email",{method:input.prepare?"GET":"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${accessToken}`},...(input.prepare?{}:{body:JSON.stringify(input)})});
     const data=await response.json();
     if(!response.ok||data.ok===false)throw new Error(data.error||"No se pudo enviar el correo.");
     return data;
@@ -193,6 +193,8 @@ function EmailSection({call,send,notify}:{call:(payload:Record<string,unknown>)=
   const [composing,setComposing]=useState(false);
   const [sending,setSending]=useState(false);
   const [form,setForm]=useState<ComposeState>(emptyCompose);
+  const [review,setReview]=useState<(ComposeState & {from:string})|null>(null);
+  const emailBusy=useRef(false);
 
   async function runSearch(){
     setSearching(true); setSearched(true); setSelected(null);
@@ -215,6 +217,8 @@ function EmailSection({call,send,notify}:{call:(payload:Record<string,unknown>)=
   }
 
   function startReply(){
+    if(emailBusy.current)return;
+    setReview(null);
     if(!selected)return;
     const fromAddress=selected.from.match(/<([^>]+)>/)?.[1]??selected.from;
     setForm({ to:fromAddress, subject:selected.subject, body:"", cc:"", reply_to_message_id:selected.id });
@@ -222,22 +226,37 @@ function EmailSection({call,send,notify}:{call:(payload:Record<string,unknown>)=
   }
 
   function startCompose(){
+    if(emailBusy.current)return;
+    setReview(null);
     setForm(emptyCompose);
     setComposing(true);
   }
 
-  async function handleSend(){
+  async function prepareReview(){
+    if(emailBusy.current)return;
     if(!form.to.trim()||!form.subject.trim()||!form.body.trim()){ notify("Falta destinatario, asunto o el cuerpo del correo."); return; }
-    const ok=confirm(`¿Enviar este correo?\n\nPara: ${form.to}\nAsunto: ${form.subject}\n\n${form.body.slice(0,200)}${form.body.length>200?"…":""}`);
-    if(!ok)return;
-    setSending(true);
+    const snapshot={...form,to:form.to.trim(),subject:form.subject.trim(),cc:form.cc.trim()};
+    emailBusy.current=true; setSending(true);
     try{
-      const data=await send({ to:form.to.trim(), subject:form.subject.trim(), body:form.body, cc:form.cc.trim()||null, reply_to_message_id:form.reply_to_message_id });
+      const account=await send({prepare:true});
+      if(typeof account.from!=="string"||!account.from)throw new Error("No pude verificar el remitente.");
+      setReview({...snapshot,from:account.from});
+    }catch(error){ notify(error instanceof Error?error.message:"No pude preparar la revisión."); }
+    finally{emailBusy.current=false;setSending(false);}
+  }
+
+  async function handleSend(){
+    if(!review||emailBusy.current)return;
+    const approved=review;
+    emailBusy.current=true; setSending(true);
+    try{
+      const data=await send({to:approved.to,subject:approved.subject,body:approved.body,cc:approved.cc||null,reply_to_message_id:approved.reply_to_message_id,expected_from:approved.from,approved:true});
       notify(data.message||"Correo enviado.");
-      setComposing(false); setForm(emptyCompose);
+      setComposing(false); setForm(emptyCompose); setReview(null);
     }catch(error){
-      notify(error instanceof Error?error.message:"No pude enviar el correo.");
-    }finally{ setSending(false); }
+      setReview(null);
+      notify(error instanceof Error?error.message:"No pude confirmar el envío. Verifica Enviados antes de reintentar.");
+    }finally{ emailBusy.current=false;setSending(false); }
   }
 
   return <div className="grid gap-6 xl:grid-cols-[1.1fr_1fr]">
@@ -277,7 +296,25 @@ function EmailSection({call,send,notify}:{call:(payload:Record<string,unknown>)=
       )}
       {!reading&&!selected&&!composing&&<div className={card}><p className="text-zinc-500">Selecciona un correo de la lista para leerlo aquí.</p></div>}
 
-      {composing&&(
+      {composing&&review&&(
+        <div className={card} aria-label="Borrador completo para aprobar">
+          <h3 className="text-lg font-semibold">Revisa el correo completo</h3>
+          <dl className="mt-4 space-y-2 break-words text-sm">
+            <dt className="font-semibold">Remitente</dt><dd>{review.from}</dd>
+            <dt className="font-semibold">Para</dt><dd>{review.to}</dd>
+            <dt className="font-semibold">CC</dt><dd>{review.cc||"Ninguno"}</dd>
+            <dt className="font-semibold">BCC</dt><dd>Ninguno</dd>
+            <dt className="font-semibold">Asunto</dt><dd>{review.subject}</dd>
+            <dt className="font-semibold">Adjuntos</dt><dd>Ninguno</dd>
+          </dl>
+          <div className="mt-4 whitespace-pre-wrap break-words rounded-xl border border-white/10 p-4">{review.body}</div>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <button className={btn} disabled={sending} onClick={()=>void handleSend()}>{sending?"Enviando…":"Apruebo este correo: enviar"}</button>
+            <button className="rounded-xl border border-white/10 px-4 py-2.5 text-sm" disabled={sending} onClick={()=>{setForm({...review});setReview(null);}}>Volver a editar</button>
+          </div>
+        </div>
+      )}
+      {composing&&!review&&(
         <div className={card}>
           <h3 className="text-lg font-semibold">{form.reply_to_message_id?"Responder correo":"Correo nuevo"}</h3>
           <div className="mt-4 space-y-3">
@@ -287,11 +324,12 @@ function EmailSection({call,send,notify}:{call:(payload:Record<string,unknown>)=
             <textarea className={`${input} min-h-40 w-full`} placeholder="Escribe tu correo…" value={form.body} onChange={e=>setForm(f=>({...f,body:e.target.value}))}/>
           </div>
           <div className="mt-4 flex gap-3">
-            <button className={btn} onClick={()=>void handleSend()} disabled={sending}><Send size={17}/>{sending?"Enviando…":"Enviar (te voy a pedir confirmación)"}</button>
-            <button className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-zinc-400 hover:bg-white/5" onClick={()=>{setComposing(false);setForm(emptyCompose);}}>Cancelar</button>
+            <button className={btn} onClick={()=>void prepareReview()} disabled={sending}><Send size={17}/>{sending?"Verificando remitente…":"Revisar borrador completo"}</button>
+            <button className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-zinc-400 hover:bg-white/5" disabled={sending} onClick={()=>{setComposing(false);setForm(emptyCompose);setReview(null);}}>Cancelar</button>
           </div>
         </div>
       )}
     </div>
   </div>;
 }
+

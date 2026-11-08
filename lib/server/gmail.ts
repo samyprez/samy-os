@@ -250,6 +250,7 @@ function encodeHeaderValue(value: string) {
 }
 
 export type SendEmailInput = {
+  expected_from?: string;
   to: string;
   subject: string;
   body: string;
@@ -273,6 +274,12 @@ export async function sendEmail(input: SendEmailInput): Promise<SentEmail> {
   if (!to) throw new Error("to es obligatorio");
   if (!subject) throw new Error("subject es obligatorio");
   if (!body.trim()) throw new Error("body es obligatorio");
+  if (input.expected_from !== undefined) {
+    const actualFrom = await getGmailAddress();
+    if (!actualFrom || actualFrom.toLowerCase() !== input.expected_from.toLowerCase()) {
+      throw new Error("La cuenta remitente cambió. Revisa y aprueba de nuevo el borrador.");
+    }
+  }
 
   let threadId: string | undefined;
   let inReplyTo = "";

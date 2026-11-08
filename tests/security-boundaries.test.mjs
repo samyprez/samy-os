@@ -63,3 +63,46 @@ test('reply sends exactly reviewed subject and body, rejects injected provider m
     assert.equal(sent, 1);
   } finally { globalThis.fetch = oldFetch; }
 });
+
+test('changed Gmail sender blocks the message before sending', async () => {
+  const oldFetch = globalThis.fetch;
+  let writes = 0;
+  globalThis.fetch = async (url) => {
+    if (url.includes('oauth2')) return Response.json({ access_token: 'unit', expires_in: 3600 });
+    if (url.endsWith('/profile')) return Response.json({ emailAddress: 'different@example.com' });
+    writes++;
+    throw new Error('Unexpected write');
+  };
+  try {
+    const gmail = load('lib/server/gmail.ts');
+    await assert.rejects(gmail.sendEmail({ expected_from: 'reviewed@example.com', to: 'recipient@example.com', subject: 'Reviewed', body: 'Body' }), /remitente cambió/);
+    assert.equal(writes, 0);
+  } finally { globalThis.fetch = oldFetch; }
+});
+
+test('dashboard preview only reads identity; sends require explicit confirmation and sender', async () => {
+  let authorized = true;
+  let writes = 0;
+  const route = load('app/api/dashboard/send-email/route.ts', {
+    '@/lib/server/samy-os-admin': { assertSamyOsCaller: async () => { if (!authorized) throw Error('UNAUTHORIZED'); return 'owner'; } },
+    '@/lib/server/gmail': {
+      gmailConfigured: () => true, getGmailAddress: async () => 'owner@example.com',
+      sendEmail: async input => { writes++; assert.equal(input.expected_from, 'owner@example.com'); return { to: input.to }; }
+    }
+  });
+  const preview = await route.GET(new Request('https://example.com'));
+  assert.equal(preview.status, 200);
+  assert.equal(preview.headers.get('cache-control'), 'no-store');
+  assert.equal((await preview.json()).from, 'owner@example.com');
+  assert.equal(writes, 0);
+  const draft = { to: 'recipient@example.com', subject: 'Reviewed', body: 'Full body' };
+  const req = input => new Request('https://example.com', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+  for (const invalid of [null, [], draft, { ...draft, approved: true }, { ...draft, approved: false, expected_from: 'owner@example.com' }]) assert.equal((await route.POST(req(invalid))).status, 400);
+  assert.equal(writes, 0);
+  assert.equal((await route.POST(req({ ...draft, approved: true, expected_from: 'owner@example.com' }))).status, 200);
+  assert.equal(writes, 1);
+  authorized = false;
+  assert.equal((await route.GET(new Request('https://example.com'))).status, 401);
+  assert.equal((await route.POST(req({ ...draft, approved: true, expected_from: 'owner@example.com' }))).status, 401);
+  assert.equal(writes, 1);
+});
