@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { assertSamyOsApiAuth, getSamyOsAdmin, getSamyOsOwnerId } from "@/lib/server/samy-os-admin";
+import { assertSamyOsApiAuth } from "@/lib/server/samy-os-admin";
 import { runGatewayOperation, type GatewayInput } from "@/lib/server/gateway-operations";
 import { DATABASE_UNREACHABLE, isDatabaseUnreachable } from "@/lib/server/gateway-errors";
 
@@ -19,10 +19,10 @@ export async function POST(request: Request) {
     }
 
     const input = (await request.json()) as GatewayInput;
-    const admin = getSamyOsAdmin();
-    const userId = await getSamyOsOwnerId();
-
-    return await runGatewayOperation(input, admin, userId);
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      return NextResponse.json({ ok: false, error: "Expected a JSON object" }, { status: 400 });
+    }
+    return await runGatewayOperation(input);
   } catch (error) {
     console.error("ChatGPT gateway error", error);
 
@@ -37,3 +37,4 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
+

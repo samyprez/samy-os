@@ -77,3 +77,39 @@ test('notification signing key cannot mint read access', () => {
   assert.equal(oauth.accessTokenCanRead(forged),false);
   assert.equal(oauth.accessTokenValid(forged),false);
 });
+
+function gatewayWithUnavailablePersonalDb() {
+  const unavailable = () => { throw Error('personal database unavailable'); };
+  return load('lib/server/gateway-operations.ts', {
+    'next/server': { NextResponse: Response },
+    '@/lib/server/samy-os-admin': { getSamyOsAdmin: unavailable, getSamyOsOwnerId: unavailable },
+    '@/lib/server/assistant-engine': {},
+    '@/lib/server/gmail': { gmailConfigured: () => true, searchEmails: async () => [{id:'mail'}], readEmail: async () => ({id:'mail'}) },
+    '@/lib/server/calendar': { calendarConfigured: () => true, listCalendarEvents: async () => [] },
+    '@/lib/server/hub': { hubConfigured: () => true, listHubClients: async () => [{id:'client'}], listHubProjects: async () => [{id:'project'}], listHubReminders: async () => [], listHubInvoices: async () => [{id:'invoice'}] },
+  });
+}
+test('legacy gateway reads remain usable while personal database is unavailable', async () => {
+  const { runGatewayOperation } = gatewayWithUnavailablePersonalDb();
+  for (const operation of ['overview','list_clients','list_tasks','list_projects','list_notes','list_invoices','search_email','read_email','list_events']) {
+    const response = await runGatewayOperation({operation,message_id:'mail'});
+    assert.equal((await response.json()).ok,true,operation);
+  }
+});
+test('personal data operations still require personal database context', async () => {
+  const { runGatewayOperation } = gatewayWithUnavailablePersonalDb();
+  for (const operation of ['list_brands','create_brand','list_health','create_health']) {
+    await assert.rejects(runGatewayOperation({operation}),/personal database unavailable/);
+  }
+});
+test('ChatGPT route authenticates and dispatches without owner lookup', async () => {
+  let authenticated = false;
+  const route = load('app/api/chatgpt/route.ts', {
+    'next/server': { NextResponse: Response },
+    '@/lib/server/samy-os-admin': { assertSamyOsApiAuth: () => { authenticated = true; } },
+    '@/lib/server/gateway-operations': { runGatewayOperation: async input => { assert.equal(authenticated,true); return Response.json({ok:true,operation:input.operation}); } },
+    '@/lib/server/gateway-errors': { isDatabaseUnreachable: () => false },
+  });
+  assert.equal((await (await route.POST(new Request('https://example.com',{method:'POST',body:JSON.stringify({operation:'list_clients'})}))).json()).ok,true);
+  assert.equal((await route.POST(new Request('https://example.com',{method:'POST',body:'null'}))).status,400);
+});

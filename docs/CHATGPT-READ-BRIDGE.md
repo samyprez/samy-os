@@ -4,6 +4,8 @@
 
 This is an incremental change in the original repository, not a replacement application. Amazing Business Hub remains the only source of business clients, tasks/projects, notes and invoices. No database or business records were created or migrated.
 
+Follow-up after team authorization: actual deployed health checks succeeded in both production and the preview. Gmail, Calendar and Hub read checks pass. The configured personal database returns `TypeError: fetch failed` on all six tables and its service-role probe; owner lookup is consequently blocked. The legacy `/api/chatgpt` route eagerly resolved that owner even for independent Hub/Gmail operations. This change now resolves personal context only for brand/health operations, preserving dashboard-supplied context and testing both independent reads and personal-operation failure.
+
 Implemented and locally tested:
 
 - Existing `/api/mcp` exposes `consultar_samy_os` after explicit additional consent.
@@ -17,7 +19,7 @@ Implemented and locally tested:
 
 ## Verification
 
-1. `npm run test:read`: nine behavioral tests with injected provider responses, including token isolation, rejected writes, Hub routing, mail parameters and diagnostic states.
+1. `npm run test:read`: twelve behavioral tests with injected provider responses, including token isolation, rejected writes, Hub routing, mail parameters and diagnostic states.
 2. `npm run test:read:http`: actual local Next HTTP routes, OAuth registration/consent/PKCE exchange, permission boundaries, tool discovery, configuration diagnostics, malformed arguments and invalid bearer rejection. Uses synthetic local secrets only. Requires a running local server configured with the three test-only values used in the CI workflow. Never point this test at production.
 3. `next typegen` followed by `tsc --noEmit`: passed.
 4. ESLint on changed code: passed. Repository-wide lint currently has 20 errors and 5 warnings in pre-existing UI code; it is not a clean full-repository lint run.
@@ -26,7 +28,7 @@ Implemented and locally tested:
 ## Rollout and actual ChatGPT acceptance
 
 1. Review this branch, run CI, and deploy an authorized Vercel preview with the existing server configuration. Do not copy production secrets into chat or the repository.
-2. Verify the deployment and actual provider identities with read calls. Direct requests timed out. After connecting Vercel, project metadata confirmed the original production deployment is READY, but protected fetching and team-scoped environment listing returned 403. Team authorization is still required; READY does not verify provider health.
+2. Verify the deployment and actual provider identities with read calls. Direct requests timed out. After connecting Vercel, project metadata confirmed the original production deployment is READY, initially protected fetching and team-scoped environment listing returned 403. Owner subsequently authorized the team; environment metadata and actual health responses became accessible. Gmail, Calendar and Hub passed provider reads in both production and preview; personal database checks failed. READY alone is not provider health.
 3. Deploy to production only after review and applicable approval. `main` is documented as auto-deployed by Vercel.
 4. Refresh and re-authorize the **existing** Samy OS Avisos connector. Do not create a duplicate plugin. On its consent screen select read access and enter the assistant key securely in the browser, never in chat. Existing notification-only authorization can remain unchanged until this step.
 5. Refresh tool discovery. Confirm `consultar_samy_os` appears in an ordinary ChatGPT conversation and call connector_status, followed by a small real Hub query and Gmail read. Local tests do not establish this production/interface acceptance.
@@ -46,9 +48,9 @@ Rollback: revert the change and redeploy. No schema rollback is necessary. Exist
 | WhatsApp | Existing private connector executed status from this ordinary chat | No | Configuration only; no delivery/inbound test |
 | Metricool | Brand query returned TorontoDominicano | No | No publication or platform-specific permission test |
 | WordPress connector | Both existing account links rejected the supplied domain with `Unknown site alias` | No | Alias inventory/configuration is not exposed by available tools; existing plugin package contains an App reference, not its backend alias map |
-| Supabase | Project listing returned content-studio and New-Amazing-dashboard | No | Personal Samy OS production database still not identified; no configuration changed |
+| Supabase | Project listing returned content-studio and New-Amazing-dashboard | No | Configured personal project identified from deployed health, but absent from the accessible project list and unreachable from deployment; no configuration changed |
 | Hostinger hosting | No hosting tools or configured local hosting MCP found in this environment | No | Two hosting account authorizations still needed; mail authorization is separate |
-| Vercel | Connected; original samy-os project and production deployment identified, state READY | No | Team-scoped environment reads and protected deployment fetch return 403; team consent requested |
+| Vercel | Connected; original samy-os project and production deployment identified, state READY | No | Team authorized; environment metadata and production/preview health read successfully. No deployment configuration changed |
 | Google Ads | Compatible marketing integration discoverable, not connected/tested | No | Account authorization needed; no budgets changed |
 
 ## Remaining engineering work (not implemented in this change)
