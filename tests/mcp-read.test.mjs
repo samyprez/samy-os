@@ -12,7 +12,7 @@ function load(file, mocks = {}) {
   return loaded.exports;
 }
 const providerNames = ['./gmail', './calendar', './hub', './notifications'];
-const read = load('lib/server/mcp-read.ts', Object.fromEntries(providerNames.map(n => [n, {}])));
+const read = load('lib/server/mcp-read.ts', { ...Object.fromEntries(providerNames.map(n => [n, {}])), "./connector-checks": load("lib/server/connector-checks.ts") });
 process.env.ASSISTANT_API_KEY = 'local-unit-assistant-key';
 process.env.MCP_OAUTH_SECRET = 'local-unit-test-only-not-a-real-secret';
 const oauth = load('lib/server/mcp-oauth.ts');
@@ -59,7 +59,7 @@ test('Gmail reads use requested message id and bounded search limit', async () =
   assert.equal((await read.runReadOperation({ operation: 'read_email', message_id: 'message1' }, deps)).email.id, 'message1');
 });
 test('health distinguishes absent configuration, real read, failure and untested writes', async () => {
-  const deps = { gmailConfigured: () => true, getGmailAddress: async () => 'test@example.com', calendarConfigured: () => false, hubConfigured: () => true, hubReachable: async () => { throw Error('private-provider-payload'); }, providerStatus: () => ({ configured: true, provider: 'twilio' }) };
+  const deps = { gmailConfigured: () => true, getGmailAddress: async () => 'test@example.com', searchEmails: async () => [], hubProjectRef: () => 'test-hub', listHubProjects: async () => { throw Error('private-provider-payload'); }, listHubClients: async () => { throw Error('private-provider-payload'); }, listHubReminders: async () => { throw Error('private-provider-payload'); }, listHubInvoices: async () => { throw Error('private-provider-payload'); }, calendarConfigured: () => false, hubConfigured: () => true, hubReachable: async () => { throw Error('private-provider-payload'); }, providerStatus: () => ({ configured: true, provider: 'twilio' }) };
   const r = await read.runReadOperation({ operation: 'connector_status' }, deps);
   assert.deepEqual(r.connectors.map(c => c.state), ['read_verified', 'not_configured', 'read_failed']);
   assert.equal(r.connectors.every(c => c.write_tested === false), true);
@@ -112,4 +112,46 @@ test('ChatGPT route authenticates and dispatches without owner lookup', async ()
   });
   assert.equal((await (await route.POST(new Request('https://example.com',{method:'POST',body:JSON.stringify({operation:'list_clients'})}))).json()).ok,true);
   assert.equal((await route.POST(new Request('https://example.com',{method:'POST',body:'null'}))).status,400);
+});
+
+const checks = load('lib/server/connector-checks.ts');
+test('diagnostics classify failures without echoing provider secrets', () => {
+  for (const [message, code] of [['invalid_grant secret=hidden','authorization_expired'],['HTTP 403 secret=hidden','permission_missing'],['HTTP 429','rate_limited'],['TypeError: fetch failed','unreachable'],['Missing GOOGLE_CLIENT_ID','not_configured']]) {
+    const result=checks.classifyConnectorError(new Error(message));
+    assert.equal(result.code,code);
+    assert.equal(JSON.stringify(result).includes('hidden'),false);
+  }
+});
+test('a stalled provider check returns a bounded timeout', async () => {
+  const result=await checks.runConnectorCheck('read',()=>new Promise(()=>{}),5);
+  assert.equal(result.code,'timeout');
+  assert.equal(result.state,'failed');
+});
+test('one denied Hub table is degraded, not a healthy connector', async () => {
+ const deps={gmailConfigured:()=>false,calendarConfigured:()=>false,hubConfigured:()=>true,hubProjectRef:()=> 'test-hub',listHubProjects:async()=>[],listHubClients:async()=>[],listHubReminders:async()=>[],listHubInvoices:async()=>{throw Error('403 permission denied');},providerStatus:()=>({configured:false,provider:'twilio'})};
+ const report=await read.runReadOperation({operation:'connector_status'},deps);
+ const hub=report.connectors.find(c=>c.provider==='amazing_business_hub');
+ assert.equal(hub.state,'degraded');
+ assert.equal(hub.read_tested,false);
+ assert.equal(hub.operations.find(c=>c.operation==='list_invoices').code,'permission_missing');
+});
+test('empty inbox never claims message body read was tested', async () => {
+ const deps={gmailConfigured:()=>true,getGmailAddress:async()=> 'owner@example.com',searchEmails:async()=>[],calendarConfigured:()=>false,hubConfigured:()=>false,hubProjectRef:()=>null,providerStatus:()=>({configured:false,provider:'twilio'})};
+ const report=await read.runReadOperation({operation:'connector_status'},deps);
+ const gmail=report.connectors.find(c=>c.provider==='gmail');
+ assert.equal(gmail.account,'owner@example.com');
+ assert.equal(gmail.operations.find(c=>c.operation==='message_body_read').state,'not_tested');
+});
+
+test('wrong Gmail account cannot be reported ready', async () => {
+ const previous=process.env.SAMY_OS_OWNER_EMAIL;
+ process.env.SAMY_OS_OWNER_EMAIL='expected@example.com';
+ try {
+  const deps={gmailConfigured:()=>true,getGmailAddress:async()=> 'other@example.com',searchEmails:async()=>[],calendarConfigured:()=>false,hubConfigured:()=>false,hubProjectRef:()=>null,providerStatus:()=>({configured:false,provider:'twilio'})};
+  const report=await read.runReadOperation({operation:'connector_status'},deps);
+  const gmail=report.connectors.find(c=>c.provider==='gmail');
+  assert.equal(gmail.state,'account_mismatch');
+  assert.equal(gmail.account_selection_verified,false);
+  assert.equal(report.overall_state,'attention_required');
+ } finally { if(previous===undefined) delete process.env.SAMY_OS_OWNER_EMAIL; else process.env.SAMY_OS_OWNER_EMAIL=previous; }
 });

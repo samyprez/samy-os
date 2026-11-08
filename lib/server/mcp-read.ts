@@ -1,7 +1,8 @@
 import "server-only";
+import { runConnectorCheck } from "./connector-checks";
 import { getGmailAddress, gmailConfigured, searchEmails, readEmail } from "./gmail";
 import { calendarConfigured, listCalendarEvents } from "./calendar";
-import { hubConfigured, hubProjectRef, hubReachable, listHubProjects, listHubClients, listHubInvoices, listHubReminders } from "./hub";
+import { hubConfigured, hubProjectRef, listHubProjects, listHubClients, listHubInvoices, listHubReminders } from "./hub";
 import { providerStatus } from "./notifications";
 
 // An explicit allowlist, not a pass-through to the write-capable gateway.
@@ -22,7 +23,7 @@ export const READ_TOOL = {
   },
 };
 
-const providers = { getGmailAddress, gmailConfigured, searchEmails, readEmail, calendarConfigured, listCalendarEvents, hubConfigured, hubProjectRef, hubReachable, listHubProjects, listHubClients, listHubInvoices, listHubReminders, providerStatus };
+const providers = { getGmailAddress, gmailConfigured, searchEmails, readEmail, calendarConfigured, listCalendarEvents, hubConfigured, hubProjectRef, listHubProjects, listHubClients, listHubInvoices, listHubReminders, providerStatus };
 
 // Dependency injection permits behavioral tests without touching customer data.
 export async function runReadOperation(args: Record<string, unknown>, deps = providers) {
@@ -48,23 +49,40 @@ export async function runReadOperation(args: Record<string, unknown>, deps = pro
       return { ok: true, source: "gmail", email: await deps.readEmail(args.message_id) };
     }
     case "connector_status": {
-      async function probe(provider: string, configured: boolean, read: () => Promise<unknown>) {
-        if (!configured) return { provider, configured, authenticated: null, read_tested: false, write_tested: false, state: "not_configured" };
-        try {
-          const account = await read();
-          return { provider, configured, authenticated: true, read_tested: true, write_tested: false, state: "read_verified", account, account_selection_verified: false };
-        } catch {
-          // Provider errors may contain private URLs or payloads; don't log them.
-          return { provider, configured, authenticated: null, read_tested: false, write_tested: false, state: "read_failed", error: "Provider read failed; check server credentials, permissions and reachability." };
-        }
+      async function probe(provider: string, configured: boolean, checks: Record<string, () => Promise<unknown>>, account?: string | null) {
+        if (!configured) return { provider, configured, authenticated: null, read_tested: false, write_tested: false, state: "not_configured", operations: Object.keys(checks).map(operation => ({ operation, state: "not_tested" })) };
+        const operations = await Promise.all(Object.entries(checks).map(([operation, check]) => runConnectorCheck(operation, check)));
+        const passed = operations.filter(check => check.state === "passed").length;
+        return { provider, configured, authenticated: passed ? true : null, read_tested: passed === operations.length, write_tested: false, state: passed === operations.length ? "read_verified" : passed ? "degraded" : "read_failed", account: account ?? null, account_selection_verified: false, operations };
       }
+      let gmailMessageRead = false;
+      let gmailAccount: string | null = null;
       const connectors = await Promise.all([
-        probe("gmail", deps.gmailConfigured(), deps.getGmailAddress),
-        probe("google_calendar", deps.calendarConfigured(), async () => { await deps.listCalendarEvents({}); return null; }),
-        probe("amazing_business_hub", deps.hubConfigured(), async () => { if (!await deps.hubReachable()) throw new Error("Hub unreachable"); return deps.hubProjectRef(); }),
+        probe("gmail", deps.gmailConfigured(), {
+          profile: async () => { gmailAccount = await deps.getGmailAddress(); },
+          search_and_read_email: async () => {
+            const messages = await deps.searchEmails("in:inbox", 1);
+            if (messages.length) { await deps.readEmail(messages[0].id); gmailMessageRead = true; }
+          },
+        }),
+        probe("google_calendar", deps.calendarConfigured(), { list_events: () => deps.listCalendarEvents({}) }),
+        probe("amazing_business_hub", deps.hubConfigured(), {
+          list_projects: () => deps.listHubProjects({}),
+          list_clients: () => deps.listHubClients(),
+          list_notes: () => deps.listHubReminders({}),
+          list_invoices: () => deps.listHubInvoices({}),
+        }, deps.hubProjectRef()),
       ]);
+      const gmail = connectors.find(connector => connector.provider === "gmail");
+      if (gmail && "account" in gmail) {
+        gmail.account = gmailAccount;
+        const expected = process.env.SAMY_OS_OWNER_EMAIL?.trim().toLowerCase();
+        gmail.account_selection_verified = Boolean(expected && gmailAccount && String(gmailAccount).toLowerCase() === expected);
+        if (expected && gmailAccount && !gmail.account_selection_verified) gmail.state = "account_mismatch";
+      }
+      if (gmail) gmail.operations.push({ operation: "message_body_read", state: gmailMessageRead ? "passed" : "not_tested" });
       const whatsapp = deps.providerStatus();
-      return { ok: true, checked_at: new Date().toISOString(), interface: "authenticated_mcp_read", connectors, whatsapp: { configured: whatsapp.configured, provider: whatsapp.provider, authenticated: null, read_tested: false, write_tested: false, state: "configuration_only" }, remaining: ["stripe", "hostinger_mail", "hostinger_hosting_account_1", "hostinger_hosting_account_2", "wordpress", "metricool", "google_ads"].map(provider => ({ provider, state: "not_implemented_in_this_bridge", chatgpt_plugin_connection: "not_tested_here" })) };
+      return { ok: true, overall_state: connectors.every(c => c.state === "read_verified") ? "reads_verified" : "attention_required", checked_at: new Date().toISOString(), interface: "authenticated_mcp_read", connectors, whatsapp: { configured: whatsapp.configured, provider: whatsapp.provider, authenticated: null, read_tested: false, write_tested: false, state: "configuration_only" }, remaining: ["stripe", "hostinger_mail", "hostinger_hosting_account_1", "hostinger_hosting_account_2", "wordpress", "metricool", "google_ads"].map(provider => ({ provider, state: "not_implemented_in_this_bridge", chatgpt_plugin_connection: "not_tested_here" })) };
     }
   }
 }
