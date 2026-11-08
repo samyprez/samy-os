@@ -71,3 +71,39 @@ The custom connector was reachable. The valid alias is `torontodominicano`
 creating/updating draft 75536 and reading it back succeeded. It remains a draft.
 Alias discovery/domain support is prepared in the original connector repository
 PR #1, not deployed. See that repository README for the exact test record.
+
+## Single-use email approval foundation (not activated)
+
+`lib/server/email-approval.ts` implements a draft-hash-bound, principal-bound
+15-minute approval lifecycle and a Supabase adapter. One conditional database
+UPDATE claims the approval before the provider call. Consumed/uncertain claims
+are never reset automatically. Provider success followed by audit failure returns
+the receipt as `sent_audit_pending`; it does not invite a second send. Persisted
+records contain hashes and receipts, not email content. Unsupported BCC and
+attachments are rejected rather than silently dropped.
+
+Five added tests use an atomic in-memory test store: edited draft fields, wrong
+principal, expiration, eight simultaneous attempts, uncertain provider delivery,
+storage failure and receipt persistence failure. These test the service contract,
+NOT actual PostgreSQL concurrency or RLS. Total local automated suite: 27 tests.
+
+`docs/proposals/email-approval-schema.sql` is an unapplied proposal, not a migration.
+It revokes browser/public table access and enables RLS, with server-only grants.
+No tables or data were changed. The original project `ljiviqzuzhtdrftphsih` still
+returns `You do not have permission to perform this action` from management API.
+Do not move this state into Hub tables or another project to bypass that blocker.
+
+Release prerequisites: regain authorized original database access, inspect its
+schema, generate/apply a migration in staging using the CLI workflow, verify
+RLS and concurrent claims against Postgres, then connect BOTH send routes and
+the dashboard/OpenAPI prepare-confirm flow to this service. The module is not
+currently imported by either send route. The existing confirmation flag is NOT
+a single-use approval. No production protection is claimed from this unused
+foundation. Verify sender at preparation and execution, bind approval principal
+to server-authenticated owner identity, and display every normalized field.
+
+This provides at most one attempt per approval, not exactly-once delivery across
+newly created approvals. Do not prepare another approval after an uncertain send
+until the owner checks Sent mail. A crash after claiming requires reconciliation.
+A malicious authorized caller can still assert owner approval; UI/ChatGPT must
+capture explicit approval after showing the complete draft.

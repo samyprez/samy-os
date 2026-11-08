@@ -106,3 +106,67 @@ test('dashboard preview only reads identity; sends require explicit confirmation
   assert.equal((await route.POST(req({ ...draft, approved: true, expected_from: 'owner@example.com' }))).status, 401);
   assert.equal(writes, 1);
 });
+
+const approval = load('lib/server/email-approval.ts');
+const reviewedDraft = { from: 'owner@example.com', to: 'recipient@example.com', subject: 'Approved subject', body: 'Full approved body', cc: '', bcc: '', attachments: [], reply_to_message_id: '' };
+function approvalFixture() {
+  const records = new Map();
+  let time = Date.parse('2026-11-08T15:00:00Z');
+  const store = {
+    create: async record => { records.set(record.id, { ...record }); },
+    claim: async (id, principal, hash, now) => {
+      const record = records.get(id);
+      if (!record || record.principal !== principal || record.draft_hash !== hash || record.state !== 'prepared' || record.expires_at <= now) return false;
+      record.state = 'processing'; return true;
+    },
+    finish: async (id, principal, state) => { assert.equal(records.get(id).principal, principal); records.get(id).state = state; }
+  };
+  return { store, records, service: approval.createEmailApprovalService(store, () => time), advance: () => { time += 16 * 60_000; } };
+}
+test('approval binds every supported draft field and principal, and expires', async () => {
+  const f = approvalFixture();
+  const p = await f.service.prepare('owner', reviewedDraft);
+  const neverSend = async () => { assert.fail('Must not send'); };
+  for (const key of ['from', 'to', 'cc', 'subject', 'body', 'reply_to_message_id']) {
+    await assert.rejects(f.service.execute('owner', p.approval_id, { ...reviewedDraft, [key]: 'changed' }, true, neverSend), /changed/);
+  }
+  await assert.rejects(f.service.execute('stranger', p.approval_id, reviewedDraft, true, neverSend), /unavailable/);
+  await assert.rejects(f.service.execute('owner', p.approval_id, reviewedDraft, false, neverSend), /Explicit/);
+  f.advance();
+  await assert.rejects(f.service.execute('owner', p.approval_id, reviewedDraft, true, neverSend), /expired/);
+});
+test('one claim wins concurrent attempts; used approval cannot send again', async () => {
+  const f = approvalFixture();
+  const p = await f.service.prepare('owner', reviewedDraft);
+  let sends = 0;
+  const send = async draft => { assert.deepEqual(draft, reviewedDraft); sends++; return { id: 'provider-receipt' }; };
+  const results = await Promise.allSettled(Array.from({ length: 8 }, () => f.service.execute('owner', p.approval_id, reviewedDraft, true, send)));
+  assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
+  assert.equal(sends, 1);
+  assert.equal(f.records.get(p.approval_id).state, 'sent');
+});
+test('uncertain provider result consumes approval and never retries automatically', async () => {
+  const f = approvalFixture();
+  const p = await f.service.prepare('owner', reviewedDraft);
+  let sends = 0;
+  const send = async () => { sends++; throw Error('private raw provider error'); };
+  await assert.rejects(f.service.execute('owner', p.approval_id, reviewedDraft, true, send), /Delivery uncertain/);
+  await assert.rejects(f.service.execute('owner', p.approval_id, reviewedDraft, true, send), /already used/);
+  assert.equal(sends, 1);
+  assert.equal(f.records.get(p.approval_id).state, 'unknown');
+});
+test('failed claim storage never sends; failed receipt persistence preserves delivery result', async () => {
+  const f = approvalFixture();
+  const p = await f.service.prepare('owner', reviewedDraft);
+  const broken = approval.createEmailApprovalService({ ...f.store, claim: async () => { throw Error('offline'); } });
+  await assert.rejects(broken.execute('owner', p.approval_id, reviewedDraft, true, async () => { assert.fail(); }), /offline/);
+  f.store.finish = async () => { throw Error('offline'); };
+  const result = await f.service.execute('owner', p.approval_id, reviewedDraft, true, async () => ({ id: 'receipt' }));
+  assert.equal(result.status, 'sent_audit_pending');
+  assert.equal(result.provider_id, 'receipt');
+  assert.equal(f.records.get(p.approval_id).state, 'processing');
+});
+test('unsupported BCC/attachments and hidden fields cannot be silently omitted from approval', () => {
+  for (const extras of [{ bcc: 'hidden@example.com' }, { attachments: ['file'] }, { unexpected: 'value' }, { to: 'recipient@example.com\r\nBcc: hidden@example.com' }]) assert.throws(() => approval.normalizeDraft({ ...reviewedDraft, ...extras }));
+  assert.notEqual(approval.draftHash(reviewedDraft), approval.draftHash({ ...reviewedDraft, body: reviewedDraft.body + ' ' }));
+});
