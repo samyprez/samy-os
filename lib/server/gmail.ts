@@ -260,9 +260,16 @@ export type SendEmailInput = {
 export type SentEmail = { id: string; thread_id: string; to: string; subject: string };
 
 export async function sendEmail(input: SendEmailInput): Promise<SentEmail> {
+  // Reject header injection before any provider call, including reply lookup.
+  for (const value of [input.to, input.subject, input.cc, input.reply_to_message_id]) {
+    if (value != null && (typeof value !== "string" || /[\r\n\x00]/.test(value))) {
+      throw new Error("Invalid email header");
+    }
+  }
+  if (typeof input.body !== "string") throw new Error("body must be a string");
   const to = input.to?.trim();
   const body = input.body ?? "";
-  let subject = input.subject?.trim() || "";
+  const subject = input.subject?.trim() || "";
   if (!to) throw new Error("to es obligatorio");
   if (!subject) throw new Error("subject es obligatorio");
   if (!body.trim()) throw new Error("body es obligatorio");
@@ -285,7 +292,10 @@ export async function sendEmail(input: SendEmailInput): Promise<SentEmail> {
     // Chain onto the existing References so long threads keep collapsing into
     // one conversation instead of splitting.
     references = [header(headers, "References"), inReplyTo].filter(Boolean).join(" ");
-    if (!/^re:/i.test(subject)) subject = `Re: ${subject}`;
+    // Do not change the subject after the owner has reviewed the final draft.
+    if (/[\r\n\x00]/.test(inReplyTo) || /[\r\n\x00]/.test(references)) {
+      throw new Error("Invalid reply metadata");
+    }
   }
 
   const headerLines = [
@@ -317,3 +327,4 @@ export async function getGmailAddress() {
   const profile = await gmailFetch<{ emailAddress?: string }>("/profile");
   return profile.emailAddress || "";
 }
+

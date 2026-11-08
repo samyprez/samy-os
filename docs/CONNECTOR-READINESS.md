@@ -32,3 +32,22 @@ The API tests reported only HTTP status, ok flags and record counts. No customer
 PR #6 was already merged and deployed before the owner clarified that future production changes must wait until the full project is finished. This increment remains on `feat/connector-readiness` and a Vercel preview. Do not merge it into production based only on passing CI.
 
 The system is not complete: ordinary-chat discovery/reconsent for the new MCP tool, personal database access, WordPress aliases, two hosting accounts, inbound messages, complete approvals/idempotency and marketing integrations still require work. A passing build is not acceptance of these missing capabilities.
+
+## Security hardening in this preview
+
+Dashboard authorization now requires the configured owner, not merely any valid
+Supabase login. An explicit owner user ID takes precedence; the email fallback
+requires a confirmed matching email. Missing owner configuration denies session
+access. Existing server gateway credentials retain their authorization path.
+
+Gmail rejects CR/LF/NUL header injection before provider calls and rejects
+injected reply metadata. It no longer adds `Re:` after draft review. The OpenAPI
+contract now describes preservation of the reviewed subject. Unit tests use
+mocked Gmail responses; no real email was sent.
+
+**This does not complete the approval workflow.** The existing dashboard
+confirmation still truncates the message and omits the sender/CC/BCC/attachment
+summary. API sends do not yet require a durable, single-use approval bound to a
+complete final draft. Production release remains blocked until this is fixed
+and tested. OAuth code replay prevention, revocation, durable action idempotency,
+and rate limiting also remain open. Do not report the full handoff completed.

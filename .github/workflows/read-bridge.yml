@@ -16,7 +16,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:read
-      - run: npx eslint lib/server/connector-checks.ts app/api/chatgpt/route.ts lib/server/gateway-operations.ts app/api/mcp/route.ts app/api/mcp/oauth/authorize/route.ts lib/server/mcp-read.ts lib/server/mcp-oauth.ts lib/server/openapi-schema.ts scripts/test-mcp-read.mjs tests/mcp-read.test.mjs
+      - run: npx eslint lib/server/gmail.ts lib/server/samy-os-admin.ts tests/security-boundaries.test.mjs lib/server/connector-checks.ts app/api/chatgpt/route.ts lib/server/gateway-operations.ts app/api/mcp/route.ts app/api/mcp/oauth/authorize/route.ts lib/server/mcp-read.ts lib/server/mcp-oauth.ts lib/server/openapi-schema.ts scripts/test-mcp-read.mjs tests/mcp-read.test.mjs
       - run: npm run build
         env:
           NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
