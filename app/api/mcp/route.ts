@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { accessTokenValid } from "@/lib/server/mcp-oauth";
+import { READ_TOOL, runReadOperation } from "@/lib/server/mcp-read";
+import { accessTokenCanRead, accessTokenValid } from "@/lib/server/mcp-oauth";
 import { PRIORITIES, providerStatus, recipientBook, sendWhatsAppNotification } from "@/lib/server/notifications";
 import { templateNames } from "@/lib/server/notification-formatters";
 
@@ -98,13 +99,17 @@ function toolText(text: string, isError = false) {
   return { content: [{ type: "text", text }], isError };
 }
 
-async function callTool(name: string, args: Record<string, unknown>) {
+async function callTool(name: string, args: Record<string, unknown>, canRead = false) {
+  if (name === READ_TOOL.name) {
+    if (!canRead) return toolText("permission_missing: vuelve a autorizar lectura en el conector Samy OS existente.", true);
+    return toolText(JSON.stringify(await runReadOperation(args)));
+  }
   if (name === "estado_whatsapp") {
     const status = providerStatus();
     const aliases = Object.keys(recipientBook()).join(", ") || "ninguno";
     return toolText(
       status.configured
-        ? `Gateway listo. Proveedor: ${status.provider}. Destinatarios: ${aliases}. Plantillas: ${templateNames().join(", ")}.`
+        ? `Configuración presente (sin prueba de entrega). Proveedor: ${status.provider}. Destinatarios: ${aliases}. Plantillas: ${templateNames().join(", ")}.`
         : `Gateway NO configurado. Faltan variables: ${status.missing_env.join(", ")}.`,
       !status.configured,
     );
@@ -141,6 +146,8 @@ export async function POST(request: Request) {
     return failure(null, -32700, "JSON inválido");
   }
 
+  if (!body || typeof body !== "object" || Array.isArray(body)) return failure(null, -32600, "Invalid request");
+  if (body.params !== undefined && (!body.params || typeof body.params !== "object" || Array.isArray(body.params))) return failure(body.id ?? null, -32602, "Invalid params");
   const { method, id } = body;
   const params = body.params || {};
 
@@ -161,16 +168,17 @@ export async function POST(request: Request) {
       return result(id, {});
 
     case "tools/list":
-      return result(id, { tools: TOOLS });
+      return result(id, { tools: accessTokenCanRead(token) ? [...TOOLS, READ_TOOL] : TOOLS });
 
     case "tools/call": {
+      if (params.arguments !== undefined && (!params.arguments || typeof params.arguments !== "object" || Array.isArray(params.arguments))) return failure(id, -32602, "Invalid arguments");
       const name = String(params.name || "");
       const args = (params.arguments && typeof params.arguments === "object" ? params.arguments : {}) as Record<
         string,
         unknown
       >;
       try {
-        return result(id, await callTool(name, args));
+        return result(id, await callTool(name, args, accessTokenCanRead(token)));
       } catch (error) {
         const message = error instanceof Error ? error.message : "Error desconocido";
         console.error("[mcp] tool error", name, message);
@@ -193,3 +201,4 @@ export async function GET(request: Request) {
   if (!token || !accessTokenValid(token)) return unauthorized(origin);
   return new NextResponse("Method Not Allowed", { status: 405, headers: { Allow: "POST" } });
 }
+

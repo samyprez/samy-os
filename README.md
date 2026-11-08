@@ -96,10 +96,19 @@ reference id sits nearby and is easy to grab by mistake.
 Confirm they are all live in production with `GET /api/health`; `chatgptGateway`
 must be `true`.
 
-## Connecting Samy OS to ChatGPT (GPT Action)
+## Ordinary ChatGPT conversations (existing MCP connector)
 
-GPT Actions with an OpenAPI schema remain the official way to connect a private
-REST API to ChatGPT. Steps:
+The existing private Samy OS Avisos connector uses `/api/mcp`, not GPT Actions.
+The read-bridge change adds `consultar_samy_os` after explicit read consent; old
+notification tokens retain only their two original tools. See
+[deployment, permissions and verified limitations](docs/CHATGPT-READ-BRIDGE.md).
+This requires deployment and refreshing/re-authorizing the existing connector;
+code in a branch does not make new tools available in ChatGPT or voice.
+
+## Connecting Samy OS to a Custom GPT (GPT Action)
+
+This legacy configuration connects the REST API to a Custom GPT. It does not
+make those Actions available in ordinary ChatGPT conversations. Steps:
 
 1. In ChatGPT, open the sidebar → **GPTs** → **Create a GPT** → **Configure**.
 2. Name it `Samy OS`.
@@ -269,3 +278,4 @@ npm run dev
 ```
 
 Open `http://localhost:3000`.
+

@@ -1,0 +1,33 @@
+name: Read bridge checks
+on:
+  pull_request:
+  push:
+    branches: [fix/chatgpt-read-bridge]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:read
+      - run: npx eslint app/api/mcp/route.ts app/api/mcp/oauth/authorize/route.ts lib/server/mcp-read.ts lib/server/mcp-oauth.ts lib/server/openapi-schema.ts scripts/test-mcp-read.mjs tests/mcp-read.test.mjs
+      - run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: local-build-placeholder
+      - name: Local HTTP permission tests
+        env:
+          NOTIFICATION_API_KEY: local-test-notification
+          ASSISTANT_API_KEY: local-test-assistant
+          MCP_OAUTH_SECRET: local-test-signing
+        run: |
+          npm start -- --hostname 127.0.0.1 > /tmp/samy-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          npm run test:read:http
