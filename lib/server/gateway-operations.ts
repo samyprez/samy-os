@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { getSamyOsAdmin, getSamyOsOwnerId } from "@/lib/server/samy-os-admin";
 import { insertBrand } from "@/lib/server/assistant-engine";
 import { gmailConfigured, missingGmailEnvVars, readEmail, searchEmails } from "@/lib/server/gmail";
 import {
@@ -121,7 +122,11 @@ export type GatewayInput = {
   mood?: string | null;
 };
 
-export async function runGatewayOperation(input: GatewayInput, admin: SupabaseClient, userId: string) {
+export async function runGatewayOperation(input: GatewayInput, admin?: SupabaseClient, userId?: string) {
+  // Resolve personal storage only for operations which actually use it.
+  async function personalContext() {
+    return { admin: admin ?? getSamyOsAdmin(), userId: userId ?? await getSamyOsOwnerId() };
+  }
   const operation = input.operation;
   if (!operation) return NextResponse.json({ ok: false, error: "operation is required" }, { status: 400 });
 
@@ -319,6 +324,7 @@ export async function runGatewayOperation(input: GatewayInput, admin: SupabaseCl
   }
 
   if (operation === "list_brands") {
+    const { admin, userId } = await personalContext();
     let query = admin.from("brands").select("id,name,type,objective,platforms,active_pending,content_frequency,notes").eq("user_id", userId).order("created_at", { ascending: true });
     if (input.query?.trim()) query = query.or(`name.ilike.%${input.query.trim()}%,type.ilike.%${input.query.trim()}%`);
     const { data, error } = await query.limit(100);
@@ -327,6 +333,7 @@ export async function runGatewayOperation(input: GatewayInput, admin: SupabaseCl
   }
 
   if (operation === "create_brand") {
+    const { admin, userId } = await personalContext();
     const name = input.name?.trim();
     if (!name) return NextResponse.json({ ok: false, error: "name is required" }, { status: 400 });
     const result = await insertBrand(admin, userId, {
@@ -342,6 +349,7 @@ export async function runGatewayOperation(input: GatewayInput, admin: SupabaseCl
   }
 
   if (operation === "list_health") {
+    const { admin, userId } = await personalContext();
     let query = admin
       .from("health_entries")
       .select("id,entry_date,sleep_hours,energy_level,water_glasses,movement_minutes,mood,notes,created_at")
@@ -354,6 +362,7 @@ export async function runGatewayOperation(input: GatewayInput, admin: SupabaseCl
   }
 
   if (operation === "create_health") {
+    const { admin, userId } = await personalContext();
     const entryDate = input.entry_date?.trim() || new Date().toISOString().slice(0, 10);
     const { data, error } = await admin
       .from("health_entries")
@@ -598,3 +607,4 @@ export async function runGatewayOperation(input: GatewayInput, admin: SupabaseCl
 
   return NextResponse.json({ ok: false, error: `Unsupported operation: ${operation}` }, { status: 400 });
 }
+

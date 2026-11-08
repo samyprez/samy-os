@@ -32,7 +32,12 @@ export class OAuthError extends Error {
   }
 }
 
-function signingSecret() {
+function signingSecret(kind = "") {
+  if (kind.endsWith("_read")) {
+    const readSecret = process.env.ASSISTANT_API_KEY?.trim() || process.env.SAMY_OS_API_TOKEN?.trim();
+    if (!readSecret) throw new OAuthError("server_error", "Missing assistant key for read authorization", 503);
+    return readSecret;
+  }
   // MCP_OAUTH_SECRET es lo propio, pero caer en la clave del gateway evita que
   // el conector quede muerto por una variable de entorno que nadie definió.
   const secret = process.env.MCP_OAUTH_SECRET?.trim() || process.env.NOTIFICATION_API_KEY?.trim();
@@ -48,7 +53,7 @@ function b64url(input: Buffer | string) {
 
 function sign(kind: string, payload: Record<string, unknown>) {
   const body = b64url(JSON.stringify({ ...payload, kind }));
-  const mac = createHmac("sha256", signingSecret()).update(`${kind}.${body}`).digest("base64url");
+  const mac = createHmac("sha256", signingSecret(kind)).update(`${kind}.${body}`).digest("base64url");
   return `${body}.${mac}`;
 }
 
@@ -56,7 +61,12 @@ function verify<T extends Record<string, unknown>>(kind: string, token: string):
   const [body, mac] = String(token || "").split(".");
   if (!body || !mac) return null;
 
-  const expected = createHmac("sha256", signingSecret()).update(`${kind}.${body}`).digest("base64url");
+  // Check token kind before selecting its signing key. Legacy-only deployments
+  // do not require an assistant key for notification tokens.
+  let header: Record<string, unknown>;
+  try { header = JSON.parse(Buffer.from(body, "base64url").toString("utf8")); } catch { return null; }
+  if (!header || header.kind !== kind) return null;
+  const expected = createHmac("sha256", signingSecret(kind)).update(`${kind}.${body}`).digest("base64url");
   const a = Buffer.from(mac);
   const b = Buffer.from(expected);
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
@@ -103,11 +113,12 @@ export function clientRedirectUris(clientId: string): string[] | null {
 
 /* --------------------------------------------------------------- códigos --- */
 
-export function issueCode(clientId: string, redirectUri: string, challenge: string) {
-  return sign("code", {
+export function issueCode(clientId: string, redirectUri: string, challenge: string, readAccess = false) {
+  return sign(readAccess ? "code_read" : "code", {
     cid: createHash("sha256").update(clientId).digest("base64url").slice(0, 32),
     uri: redirectUri,
     chal: challenge,
+    read_access: readAccess,
     exp: Date.now() + CODE_TTL_MS,
     nonce: randomBytes(8).toString("base64url"),
   });
@@ -115,7 +126,8 @@ export function issueCode(clientId: string, redirectUri: string, challenge: stri
 
 /** Canjea el código verificando PKCE S256 y que la redirect_uri no cambió. */
 export function redeemCode(code: string, clientId: string, redirectUri: string, verifier: string) {
-  const parsed = verify<{ cid: string; uri: string; chal: string }>("code", code);
+  const readCode = verify<{ cid: string; uri: string; chal: string }>("code_read", code);
+  const parsed = readCode || verify<{ cid: string; uri: string; chal: string }>("code", code);
   if (!parsed) throw new OAuthError("invalid_grant", "Código inválido o caducado");
 
   const cid = createHash("sha256").update(clientId).digest("base64url").slice(0, 32);
@@ -125,11 +137,17 @@ export function redeemCode(code: string, clientId: string, redirectUri: string, 
   const computed = createHash("sha256").update(String(verifier || "")).digest("base64url");
   if (computed !== parsed.chal) throw new OAuthError("invalid_grant", "PKCE no verifica");
 
-  return sign("access", { exp: Date.now() + TOKEN_TTL_MS, iat: Date.now() });
+  return sign(readCode ? "access_read" : "access", { exp: Date.now() + TOKEN_TTL_MS, iat: Date.now() });
 }
 
 export function accessTokenValid(token: string) {
-  return verify("access", token) != null;
+  return verify("access", token) != null || verify("access_read", token) != null;
 }
 
 export const ACCESS_TOKEN_TTL_SECONDS = Math.floor(TOKEN_TTL_MS / 1000);
+
+
+/** Legacy notification tokens never gain access to mail or business data. */
+export function accessTokenCanRead(token: string) {
+  return verify("access_read", token) != null;
+}

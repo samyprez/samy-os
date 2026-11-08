@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { clientRedirectUris, issueCode } from "@/lib/server/mcp-oauth";
+import { matchesSamyOsSecret } from "@/lib/server/samy-os-admin";
 import { notificationAuthSecrets } from "@/lib/server/notifications";
 
 export const runtime = "nodejs";
@@ -60,6 +61,7 @@ function page(params: AuthParams, error: string | null, fatal: string | null) {
         <input type="hidden" name="code_challenge_method" value="${escape(params.method)}">
         <label for="key">Clave del gateway</label>
         <input id="key" name="key" type="password" autocomplete="off" autofocus required>
+        <label><input type="checkbox" name="read_access" value="yes"> Autorizar también lectura de Gmail, calendario, clientes, tareas, notas y facturas. Requiere la clave del asistente, no la clave de avisos.</label>
         <button type="submit">Autorizar</button>
       </form>`;
 
@@ -121,17 +123,19 @@ export async function POST(request: Request) {
 
   const key = String(form.get("key") || "");
   const secrets = notificationAuthSecrets();
-  const ok = secrets.some((secret) => {
+  const readAccess = form.get("read_access") === "yes";
+  const ok = readAccess ? matchesSamyOsSecret(key) : secrets.some((secret) => {
     const a = Buffer.from(key);
     const b = Buffer.from(secret);
     return a.length === b.length && timingSafeEqual(a, b);
   });
   if (!ok) return html(page(params, "Clave incorrecta.", null), 401);
 
-  const code = issueCode(params.clientId, params.redirectUri, params.challenge);
+  const code = issueCode(params.clientId, params.redirectUri, params.challenge, readAccess);
   const target = new URL(params.redirectUri);
   target.searchParams.set("code", code);
   if (params.state) target.searchParams.set("state", params.state);
 
   return NextResponse.redirect(target.toString(), 302);
 }
+
