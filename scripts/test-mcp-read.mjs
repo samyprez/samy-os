@@ -20,13 +20,15 @@ async function consent(read, key) {
 }
 const legacy=await consent(false,'local-test-notification');
 assert.equal(legacy.status,302);
-assert.equal((await rpc(legacy.token,'tools/list',{})).data.result.tools.length,2);
+const legacyCatalog = (await rpc(legacy.token,'tools/list',{})).data.result.tools;
+assert.equal(legacyCatalog.length,3);
 assert.equal((await rpc(legacy.token,'tools/call',{name:'consultar_samy_os',arguments:{operation:'connector_status'}})).data.result.isError,true);
 assert.equal((await consent(true,'local-test-notification')).status,401);
 const read=await consent(true,'local-test-assistant');
 assert.equal(read.status,302);
 const listed=await rpc(read.token,'tools/list',{});
 assert.equal(listed.data.result.tools.length,3);
+assert.deepEqual(listed.data.result.tools,legacyCatalog);
 assert.equal(listed.data.result.tools.find(t=>t.name==='consultar_samy_os').annotations.readOnlyHint,true);
 const health=await rpc(read.token,'tools/call',{name:'consultar_samy_os',arguments:{operation:'connector_status'}});
 assert.equal(health.data.result.isError,false);
