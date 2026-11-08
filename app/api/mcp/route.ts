@@ -168,7 +168,8 @@ export async function POST(request: Request) {
       return result(id, {});
 
     case "tools/list":
-      return result(id, { tools: accessTokenCanRead(token) ? [...TOOLS, READ_TOOL] : TOOLS });
+      // Advertise a stable catalog; callTool still enforces read consent before provider access.
+      return result(id, { tools: [...TOOLS, READ_TOOL] });
 
     case "tools/call": {
       if (params.arguments !== undefined && (!params.arguments || typeof params.arguments !== "object" || Array.isArray(params.arguments))) return failure(id, -32602, "Invalid arguments");
