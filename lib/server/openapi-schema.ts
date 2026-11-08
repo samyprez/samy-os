@@ -375,7 +375,7 @@ export function buildSamyOsOpenApi(origin: string) {
                     reply_to_message_id: {
                       type: "string",
                       description:
-                        "Id del mensaje al que se responde, obtenido con search_email. Mantiene el correo en el mismo hilo y añade 'Re:' al asunto si falta.",
+                        "Id del mensaje al que se responde, obtenido con search_email. Conserva el asunto aprobado sin modificaciones. Gmail puede separar el hilo si el asunto no coincide.",
                     },
                   },
                 },

@@ -56,6 +56,13 @@ export async function assertSamyOsCaller(request: Request): Promise<string> {
 
   const { data, error } = await getSamyOsAdmin().auth.getUser(token);
   if (error || !data.user) throw new Error("UNAUTHORIZED");
+  // A valid session alone must never grant access to the owner's Hub or Gmail.
+  const ownerId = process.env.SAMY_OS_OWNER_USER_ID?.trim();
+  const ownerEmail = process.env.SAMY_OS_OWNER_EMAIL?.trim().toLowerCase();
+  const isOwner = ownerId
+    ? data.user.id === ownerId
+    : Boolean(ownerEmail && data.user.email_confirmed_at && data.user.email?.toLowerCase() === ownerEmail);
+  if (!isOwner) throw new Error("UNAUTHORIZED");
   return data.user.id;
 }
 
@@ -86,3 +93,4 @@ const user = data.users.find((item) => item.email?.toLowerCase() === email);
   if (!user) throw new Error(`Samy OS owner not found for ${email}`);
   return user.id;
 }
+
