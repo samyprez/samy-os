@@ -11,7 +11,7 @@ function load(file, mocks = {}) {
   new Function('require', 'module', 'exports', code)((name) => name === 'server-only' ? {} : mocks[name] || require(name), loaded, loaded.exports);
   return loaded.exports;
 }
-const providerNames = ['./gmail', './calendar', './hub', './notifications'];
+const providerNames = ['./gmail', './calendar', './hub', './notifications', './connectors', './whatsapp-inbox'];
 const read = load('lib/server/mcp-read.ts', Object.fromEntries(providerNames.map(n => [n, {}])));
 process.env.ASSISTANT_API_KEY = 'local-unit-assistant-key';
 process.env.MCP_OAUTH_SECRET = 'local-unit-test-only-not-a-real-secret';

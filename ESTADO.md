@@ -50,6 +50,8 @@ vez) y enviar correo es `true` (siempre confirma).
 | **Salud** (`list_health`, `create_health`) | Supabase de Samy OS, tabla `health_entries` | gateway |
 | **Marcas** (`list_brands`, `create_brand`) | Supabase de Samy OS | gateway |
 | **WhatsApp entrante / conversaciones** (empezado, no terminado) | WhatsApp Business Cloud API | `lib/server/whatsapp.ts` |
+| **WhatsApp entrante por Twilio + borradores a terceros** (código listo; falta migración 004 y URL en Twilio) | Supabase de Samy OS, `whatsapp_messages` / `whatsapp_drafts` | `app/api/whatsapp/twilio`, `app/api/whatsapp/drafts` — ver `docs/whatsapp-gateway.md` |
+| **Stripe, Hostinger ×2, WordPress** (lectura; sin credenciales todavía) | Proveedor nativo | `lib/server/connectors.ts` |
 | **Avisos salientes por WhatsApp** (listo) | Twilio WhatsApp | `lib/server/notifications.ts` + `lib/server/twilio-whatsapp.ts` — ver `docs/whatsapp-gateway.md` |
 | **Conector MCP para ChatGPT** (listo) | OAuth propio, sin estado | `app/api/mcp/` + `lib/server/mcp-oauth.ts`. Es lo que usan las tareas programadas: corren en chat normal, donde no hay Actions de GPT pero sí conectores. |
 
