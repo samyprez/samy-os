@@ -283,3 +283,46 @@ producía el peor fallo posible: un aviso con la cabecera y el pie y nada en
 medio, devolviendo 200. Se vio en el primer envío real desde el GPT. Por eso
 `coerceTemplateData` acepta las dos formas, y cada llamada con plantilla deja
 en el log qué campos trajo — los nombres, nunca el contenido.
+
+
+---
+
+## Entrante, borradores y diagnóstico (añadido el 8-nov-2026)
+
+### Qué permite realmente Twilio en esta cuenta
+
+| Capacidad | ¿Se puede? |
+|---|---|
+| Recibir mensajes individuales al número de Twilio | Sí, por webhook firmado. Solo lo que llegue después de configurarlo. |
+| Responder con texto libre | Solo dentro de las 24 h siguientes al último mensaje de esa persona. |
+| Iniciar conversación / escribir fuera de 24 h | Solo con plantilla aprobada (`content_sid`, `HX…`). En Sandbox, solo a números que hicieron `join`. |
+| Leer o escribir en **grupos** de WhatsApp | **No.** La API de WhatsApp Business no da acceso a grupos. |
+| Leer el historial del WhatsApp personal de Samy | **No.** |
+
+Fuentes: [Overview WhatsApp + Twilio](https://www.twilio.com/docs/whatsapp/api), [error 63016](https://www.twilio.com/docs/api/errors/63016), [seguridad de webhooks](https://www.twilio.com/docs/usage/webhooks/webhooks-security).
+
+### Webhook entrante: `POST /api/whatsapp/twilio`
+
+- Configurar en Twilio Console (Sandbox o el remitente de WhatsApp → *A message comes in*, método POST) la URL exacta `https://samy-os-seven.vercel.app/api/whatsapp/twilio`, y poner **esa misma** URL en `TWILIO_WEBHOOK_URL` en Vercel. Con esa variable, cada envío pide además recibos de entrega (`StatusCallback`) al mismo endpoint.
+- Valida `X-Twilio-Signature` (HMAC-SHA1 con `TWILIO_AUTH_TOKEN`) y que `AccountSid` sea la cuenta propia. Sin firma válida → 403.
+- Idempotente: los mensajes se insertan una sola vez por `MessageSid`; los recibos solo hacen avanzar el estado (un `sent` repetido no pisa un `delivered`). Por eso reenviar una petición capturada no tiene efecto.
+- Guarda en `whatsapp_messages` (la misma tabla del webhook de Meta, con `provider = 'twilio'`). Los logs no incluyen texto ni números completos.
+- El webhook de Meta (`/api/whatsapp/webhook`) sigue igual.
+
+### Avisos vs. terceros
+
+`/api/notifications/whatsapp` ahora solo envía a números del directorio (`SAMY_WHATSAPP`, `PARTNER_WHATSAPP`, `NOTIFY_WHATSAPP_*`). Un número fuera → 403 `recipient_not_in_directory`. Los avisos y plantillas existentes no cambian.
+
+Para escribir a un tercero: `POST /api/whatsapp/drafts` (Bearer `ASSISTANT_API_KEY`).
+
+1. `{"action":"create","to":"+1…","body":"…"}` (o `content_sid` + `content_variables`, y opcional `hub_client_id`). El destinatario debe estar identificado: cliente del Hub cuyo teléfono coincide, o alguien que ya escribió al número de Twilio. Devuelve `draft_id` y `approval_hash`.
+2. Mostrar a Samy destinatario y texto exactos.
+3. Solo con su aprobación: `{"action":"approve_and_send","draft_id":"…","approval_hash":"…","approved":true}`. Cualquier cambio exige un borrador nuevo. Un segundo intento con el mismo borrador da 409, nunca un doble envío.
+4. `{"action":"cancel","draft_id":"…"}` · `GET` lista borradores con números enmascarados.
+
+### Diagnóstico separado
+
+`consultar_samy_os` → `connector_status` → `whatsapp.diagnostics`:
+`configuration` (variables, modo sandbox/registrado), `authentication` (lectura real de la cuenta en Twilio, sin enviar), `sending.verified` (solo si Twilio confirmó una entrega por el webhook firmado), `receiving.verified` (solo si llegó un mensaje firmado). Lectura del inbox: operación `list_whatsapp_messages`.
+
+Requiere aplicar `supabase/migrations/004_twilio_whatsapp_inbox.sql` (solo añade columnas y una tabla).

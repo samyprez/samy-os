@@ -9,6 +9,7 @@ import {
 } from "@/lib/server/twilio-whatsapp";
 import { missingWhatsAppEnvVars, sendWhatsAppText, whatsappConfigured } from "@/lib/server/whatsapp";
 import { priorityPrefix, renderTemplate, templateNames } from "@/lib/server/notification-formatters";
+import { maskPhone, recordTwilioOutbound } from "@/lib/server/whatsapp-inbox";
 
 /**
  * Samy's reusable WhatsApp notification gateway.
@@ -147,6 +148,16 @@ function resolveOneRecipient(entry: string, book: Record<string, string>): strin
       400,
       "invalid_recipient",
       "Usa formato E.164 (+16474692835) o un alias configurado.",
+    );
+  }
+  // Avisos solo al directorio (Samy, partner, NOTIFY_WHATSAPP_*). A un
+  // tercero se le escribe con borrador + aprobación: /api/whatsapp/drafts.
+  if (!Object.values(book).includes(normalized)) {
+    throw new NotificationError(
+      "Ese número no está en el directorio de avisos",
+      403,
+      "recipient_not_in_directory",
+      "Para escribir a un tercero crea un borrador en /api/whatsapp/drafts y apruébalo; o añade el número como NOTIFY_WHATSAPP_<ALIAS>.",
     );
   }
   return [normalized];
@@ -314,7 +325,8 @@ type LogEntry = {
  * authorization headers, and never the body of the message.
  */
 function log(entry: LogEntry) {
-  console.log(`[whatsapp-gateway] ${JSON.stringify({ ts: new Date().toISOString(), ...entry })}`);
+  const safe = entry.to ? { ...entry, to: maskPhone(entry.to) } : entry;
+  console.log(`[whatsapp-gateway] ${JSON.stringify({ ts: new Date().toISOString(), ...safe })}`);
 }
 
 /* ----------------------------------------------------------- the gateway --- */
@@ -482,6 +494,13 @@ export async function sendWhatsAppNotification(input: NotificationRequest): Prom
       const sent = await sendViaProvider(provider, to, body, { contentSid, contentVariables });
       rememberSend(dedupeKey, Date.now());
       log({ event: "sent", source, provider, to, status: sent.status, sid: sent.sid });
+      if (provider === "twilio" && sent.sid) {
+        // Evidencia para el diagnóstico de envío. Si la base falla, el aviso
+        // ya salió: se anota y se sigue.
+        await recordTwilioOutbound({ sid: sent.sid, to, from: null, body, status: sent.status, source }).catch((e) =>
+          log({ event: "record_failed", source, provider, to, error: e instanceof Error ? e.message.slice(0, 120) : "unknown" }),
+        );
+      }
       results.push({ to, status: "sent", sid: sent.sid || null });
     } catch (error) {
       const isTwilio = error instanceof TwilioSendError;

@@ -10,7 +10,7 @@
     "test:whatsapp": "node scripts/test-whatsapp-gateway.mjs",
     "setup:twilio": "node scripts/setup-twilio.mjs",
     "test:mcp": "node scripts/test-mcp.mjs",
-    "test:read": "node --test tests/mcp-read.test.mjs",
+    "test:read": "node --test tests/mcp-read.test.mjs tests/twilio-whatsapp.test.mjs",
     "test:read:http": "node scripts/test-mcp-read.mjs"
   },
   "dependencies": {

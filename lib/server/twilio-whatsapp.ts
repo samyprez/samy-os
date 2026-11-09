@@ -12,6 +12,8 @@ import "server-only";
  * provider can be swapped in without touching them.
  */
 
+import { createHmac, timingSafeEqual } from "node:crypto";
+
 const DEFAULT_API_BASE = "https://api.twilio.com";
 
 export const TWILIO_ENV_VARS = ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"] as const;
@@ -115,6 +117,10 @@ export async function sendTwilioWhatsApp(input: TwilioSendInput): Promise<Twilio
     if (input.contentVariables) form.set("ContentVariables", JSON.stringify(input.contentVariables));
   }
   if (input.body) form.set("Body", input.body);
+  // Delivery receipts come back to the signed inbound webhook. Only set when
+  // the public URL is known; otherwise Twilio simply sends no callbacks.
+  const statusCallback = process.env.TWILIO_WEBHOOK_URL?.trim();
+  if (statusCallback) form.set("StatusCallback", statusCallback);
 
   const res = await fetch(`${base}/2010-04-01/Accounts/${accountSid}/Messages.json`, {
     method: "POST",
@@ -155,4 +161,73 @@ export async function sendTwilioWhatsApp(input: TwilioSendInput): Promise<Twilio
     to: typeof parsed.to === "string" ? parsed.to : channelAddress(input.to),
     from: typeof parsed.from === "string" ? parsed.from : (from ?? null),
   };
+}
+
+/* --------------------------------------------------------- webhook auth --- */
+
+/**
+ * Twilio signs every webhook: HMAC-SHA1 keyed with the Auth Token over the
+ * full URL Twilio called, followed by each POST parameter name+value sorted by
+ * name, base64-encoded, in the `X-Twilio-Signature` header.
+ * https://www.twilio.com/docs/usage/webhooks/webhooks-security
+ */
+export function computeTwilioSignature(authToken: string, url: string, params: Record<string, string>) {
+  const payload = Object.keys(params)
+    .sort()
+    .reduce((acc, key) => acc + key + params[key], url);
+  return createHmac("sha1", authToken).update(Buffer.from(payload, "utf8")).digest("base64");
+}
+
+export function validateTwilioSignature(
+  url: string,
+  params: Record<string, string>,
+  signatureHeader: string | null,
+  authToken = process.env.TWILIO_AUTH_TOKEN?.trim() || "",
+) {
+  if (!authToken || !signatureHeader) return false;
+  const expected = Buffer.from(computeTwilioSignature(authToken, url, params));
+  const received = Buffer.from(signatureHeader.trim());
+  return expected.length === received.length && timingSafeEqual(expected, received);
+}
+
+/* ------------------------------------------------------- diagnostics ------ */
+
+/** Twilio's shared Sandbox sender. Only joined numbers can talk to it. */
+export const TWILIO_SANDBOX_NUMBER = "+14155238886";
+
+export function twilioSenderMode(): "sandbox" | "registered_sender" | "messaging_service" | "unknown" {
+  if (process.env.TWILIO_MESSAGING_SERVICE_SID?.trim()) return "messaging_service";
+  const from = (process.env.TWILIO_WHATSAPP_FROM || "").replace(/^whatsapp:/i, "").trim();
+  if (!from) return "unknown";
+  return from === TWILIO_SANDBOX_NUMBER ? "sandbox" : "registered_sender";
+}
+
+export type TwilioAuthProbe =
+  | { authenticated: true; account_status: string | null; account_type: string | null }
+  | { authenticated: false; http_status: number | null; error: string };
+
+/**
+ * Read-only: fetches the account resource. Proves the SID/token pair works
+ * without creating a message. Never returns the token or the raw body.
+ */
+export async function probeTwilioAuth(): Promise<TwilioAuthProbe> {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID?.trim();
+  const authToken = process.env.TWILIO_AUTH_TOKEN?.trim();
+  if (!accountSid || !authToken) return { authenticated: false, http_status: null, error: "missing_credentials" };
+  const base = process.env.TWILIO_API_BASE_URL?.trim() || DEFAULT_API_BASE;
+  try {
+    const res = await fetch(`${base}/2010-04-01/Accounts/${accountSid}.json`, {
+      headers: { Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}` },
+      cache: "no-store",
+    });
+    if (!res.ok) return { authenticated: false, http_status: res.status, error: res.status === 401 ? "invalid_credentials" : "provider_error" };
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    return {
+      authenticated: true,
+      account_status: typeof body.status === "string" ? body.status : null,
+      account_type: typeof body.type === "string" ? body.type : null,
+    };
+  } catch {
+    return { authenticated: false, http_status: null, error: "unreachable" };
+  }
 }
