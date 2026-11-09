@@ -49,7 +49,7 @@ function escape(value: string) {
   );
 }
 
-function page(params: AuthParams, error: string | null, fatal: string | null) {
+function page(params: AuthParams, error: string | null, fatal: string | null, readChecked = false) {
   const body = fatal
     ? `<p class="err">${escape(fatal)}</p>`
     : `${error ? `<p class="err">${escape(error)}</p>` : ""}
@@ -61,7 +61,7 @@ function page(params: AuthParams, error: string | null, fatal: string | null) {
         <input type="hidden" name="code_challenge_method" value="${escape(params.method)}">
         <label for="key">Clave del gateway</label>
         <input id="key" name="key" type="password" autocomplete="off" autofocus required>
-        <label><input type="checkbox" name="read_access" value="yes"> Autorizar también lectura de Gmail, calendario, clientes, tareas, notas y facturas. Requiere la clave del asistente, no la clave de avisos.</label>
+        <label class="check"><input type="checkbox" name="read_access" value="yes"${readChecked ? " checked" : ""}> Autorizar también lectura de Gmail, calendario, clientes, tareas, notas y facturas. Requiere la clave del asistente, no la clave de avisos.</label>
         <button type="submit">Autorizar</button>
       </form>`;
 
@@ -82,6 +82,8 @@ input{width:100%;padding:10px 12px;border:1px solid #d4d4d8;border-radius:8px;fo
 button{margin-top:14px;width:100%;padding:11px;border:0;border-radius:8px;background:#18181b;
  color:#fff;font-size:15px;font-weight:600;cursor:pointer}
 .err{color:#b91c1c;font-weight:500}
+.check{display:flex;gap:10px;align-items:flex-start;font-weight:500;margin-top:14px;line-height:1.4}
+.check input{width:auto;margin:2px 0 0;flex:none}
 @media(prefers-color-scheme:dark){
  body{background:#09090b;color:#fafafa}
  .card{background:#18181b;box-shadow:none;border:1px solid #27272a}
@@ -124,12 +126,28 @@ export async function POST(request: Request) {
   const key = String(form.get("key") || "");
   const secrets = notificationAuthSecrets();
   const readAccess = form.get("read_access") === "yes";
-  const ok = readAccess ? matchesSamyOsSecret(key) : secrets.some((secret) => {
+  const notificationOk = secrets.some((secret) => {
     const a = Buffer.from(key);
     const b = Buffer.from(secret);
     return a.length === b.length && timingSafeEqual(a, b);
   });
-  if (!ok) return html(page(params, "Clave incorrecta.", null), 401);
+  const ok = readAccess ? matchesSamyOsSecret(key) : notificationOk;
+  if (!ok) {
+    // La casilla se vuelve a pintar marcada: antes se desmarcaba sola tras el
+    // error, y el segundo intento autorizaba sin lectura sin que nadie lo notara.
+    const notificationKeyForRead = readAccess && notificationOk;
+    console.info("[mcp-oauth] autorización rechazada", {
+      read_access: readAccess,
+      reason: notificationKeyForRead ? "clave_de_avisos_para_lectura" : "clave_incorrecta",
+    });
+    const message = notificationKeyForRead
+      ? "Esa es la clave de avisos: solo sirve para WhatsApp. Para autorizar lectura escribe la clave del asistente (ASSISTANT_API_KEY)."
+      : readAccess
+        ? "Clave incorrecta. Para lectura hace falta la clave del asistente (ASSISTANT_API_KEY)."
+        : "Clave incorrecta.";
+    return html(page(params, message, null, readAccess), 401);
+  }
+  console.info("[mcp-oauth] autorización concedida", { read_access: readAccess });
 
   const code = issueCode(params.clientId, params.redirectUri, params.challenge, readAccess);
   const target = new URL(params.redirectUri);

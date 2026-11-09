@@ -24,6 +24,13 @@ const legacyCatalog = (await rpc(legacy.token,'tools/list',{})).data.result.tool
 assert.equal(legacyCatalog.length,3);
 assert.equal((await rpc(legacy.token,'tools/call',{name:'consultar_samy_os',arguments:{operation:'connector_status'}})).data.result.isError,true);
 assert.equal((await consent(true,'local-test-notification')).status,401);
+// Tras un error, la casilla de lectura debe seguir marcada y el mensaje decir qué clave falta;
+// si se desmarca sola, el segundo intento autoriza sin lectura sin que nadie lo note.
+const retry=await fetch(base+'/api/mcp/oauth/authorize',{method:'POST',redirect:'manual',body:new URLSearchParams({...common,key:'local-test-notification',read_access:'yes'})});
+const retryPage=await retry.text();
+assert.equal(retry.status,401);
+assert.match(retryPage,/name="read_access" value="yes" checked/);
+assert.match(retryPage,/clave de avisos/);
 const read=await consent(true,'local-test-assistant');
 assert.equal(read.status,302);
 const listed=await rpc(read.token,'tools/list',{});

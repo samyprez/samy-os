@@ -101,7 +101,11 @@ function toolText(text: string, isError = false) {
 
 async function callTool(name: string, args: Record<string, unknown>, canRead = false) {
   if (name === READ_TOOL.name) {
-    if (!canRead) return toolText("permission_missing: vuelve a autorizar lectura en el conector Samy OS existente.", true);
+    if (!canRead) {
+      // Sin datos del token: solo deja constancia de que llegó uno de avisos.
+      console.info("[mcp] lectura denegada: el token es solo de avisos");
+      return toolText("permission_missing: vuelve a autorizar lectura en el conector Samy OS existente.", true);
+    }
     return toolText(JSON.stringify(await runReadOperation(args)));
   }
   if (name === "estado_whatsapp") {
