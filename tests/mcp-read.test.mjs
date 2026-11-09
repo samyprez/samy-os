@@ -53,6 +53,13 @@ test('routes every business query to existing Hub without personal database', as
   }
   assert.deepEqual(calls.map(c => c[0]), ['projects', 'projects', 'clients', 'notes', 'invoices']);
 });
+
+test('limit trims list results, not only email search', async () => {
+  const many = Array.from({ length: 30 }, (_, i) => ({ id: String(i) }));
+  const deps = { listHubClients: async () => many };
+  assert.equal((await read.runReadOperation({ operation: 'list_clients', limit: 10 }, deps)).clients.length, 10);
+  assert.equal((await read.runReadOperation({ operation: 'list_clients' }, deps)).clients.length, 30);
+});
 test('Gmail reads use requested message id and bounded search limit', async () => {
   const deps = { searchEmails: async (q, n) => { assert.equal(q, 'is:unread'); assert.equal(n, 5); return []; }, readEmail: async id => { assert.equal(id, 'message1'); return { id }; } };
   assert.equal((await read.runReadOperation({ operation: 'search_email', query: 'is:unread', limit: 5 }, deps)).ok, true);

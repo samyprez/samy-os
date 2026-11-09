@@ -36,12 +36,15 @@ export async function runReadOperation(args: Record<string, unknown>, deps = pro
   if (args.limit !== undefined && (!Number.isInteger(args.limit) || Number(args.limit) < 1 || Number(args.limit) > 25)) throw new Error("Invalid limit");
   const query = args.query as string | undefined;
   const status = args.status as string | undefined;
+  // Los adaptadores del Hub y del calendario no reciben límite: se recorta aquí
+  // para que limit valga en todas las listas, no solo en search_email.
+  const cap = <T>(rows: T[]) => (args.limit === undefined ? rows : rows.slice(0, Number(args.limit)));
   switch (operation) {
-    case "list_tasks": case "list_projects": return { ok: true, source: "amazing_business_hub", projects: await deps.listHubProjects({ query, status }) };
-    case "list_clients": return { ok: true, source: "amazing_business_hub", clients: await deps.listHubClients(query) };
-    case "list_notes": return { ok: true, source: "amazing_business_hub", notes: await deps.listHubReminders({ query }) };
-    case "list_invoices": return { ok: true, source: "amazing_business_hub", invoices: await deps.listHubInvoices({ query, status }) };
-    case "list_events": return { ok: true, source: "google_calendar", events: await deps.listCalendarEvents({ query }) };
+    case "list_tasks": case "list_projects": return { ok: true, source: "amazing_business_hub", projects: cap(await deps.listHubProjects({ query, status })) };
+    case "list_clients": return { ok: true, source: "amazing_business_hub", clients: cap(await deps.listHubClients(query)) };
+    case "list_notes": return { ok: true, source: "amazing_business_hub", notes: cap(await deps.listHubReminders({ query })) };
+    case "list_invoices": return { ok: true, source: "amazing_business_hub", invoices: cap(await deps.listHubInvoices({ query, status })) };
+    case "list_events": return { ok: true, source: "google_calendar", events: cap(await deps.listCalendarEvents({ query })) };
     case "search_email": return { ok: true, source: "gmail", emails: await deps.searchEmails(query || "", Number(args.limit ?? 10)) };
     case "read_email": {
       if (typeof args.message_id !== "string" || !args.message_id.trim()) throw new Error("message_id is required");
